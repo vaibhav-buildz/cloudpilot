@@ -1,0 +1,39 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Allowlist example environment template only"
+paths = [
+    '''(?i)^\.env\.example$''',
+    '''(?i)^backend/\.env\.example$'''
+]
+
+[[rules]]
+id = "cloudpilot-api-key"
+description = "CloudPilot application API key assignment"
+regex = '''(?i)CLOUDPILOT_API_KEY\s*=\s*['"]?[a-zA-Z0-9_\-]{20,}['"]?'''
+secretGroup = 0
+
+[[rules]]
+id = "supabase-secret-key"
+description = "Supabase secret or service key prefix"
+regex = '''sb_secret_[a-zA-Z0-9_\-]{20,}'''
+secretGroup = 0
+
+[[rules]]
+id = "supabase-service-role-jwt"
+description = "Supabase service role JWT token"
+regex = '''eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.[a-zA-Z0-9_\-]+\.[a-zA-Z0-9_\-]+'''
+secretGroup = 0
+
+[[rules]]
+id = "render-api-key"
+description = "Render API authorization key"
+regex = '''rnd_[a-zA-Z0-9]{20,}'''
+secretGroup = 0
+
+[[rules]]
+id = "vercel-access-token"
+description = "Vercel API access token"
+regex = '''(?i)vercel[_-]?(?:token|secret)\s*[:=]\s*['"]?[a-zA-Z0-9]{24,}['"]?'''
+secretGroup = 0
