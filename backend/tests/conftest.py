@@ -1,0 +1,63 @@
+"""Pytest fixtures and configuration."""
+
+from __future__ import annotations
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.config import Settings, get_settings
+from app.main import create_app
+from app.ratelimit import rate_limiter
+
+TEST_VALID_KEY = "test_key_with_a_length_of_at_least_32_characters_for_cloudpilot"
+
+
+@pytest.fixture(autouse=True)
+def reset_rate_limiter():
+    """Reset the in-memory sliding window rate limiter before each test."""
+    rate_limiter.reset()
+    yield
+    rate_limiter.reset()
+
+
+@pytest.fixture
+def valid_dev_settings() -> Settings:
+    """Return valid development settings with a strong API key."""
+    return Settings(
+        APP_ENV="development",
+        CLOUDPILOT_API_KEY=TEST_VALID_KEY,
+        DEV_AUTH_DISABLED=False,
+        ALLOWED_ORIGIN="http://localhost:5173",
+        RATE_LIMIT_PER_MIN=30,
+    )
+
+
+@pytest.fixture
+def dev_auth_disabled_settings() -> Settings:
+    """Return development settings with auth disabled and no key."""
+    return Settings(
+        APP_ENV="development",
+        CLOUDPILOT_API_KEY="",
+        DEV_AUTH_DISABLED=True,
+        ALLOWED_ORIGIN="http://localhost:5173",
+        RATE_LIMIT_PER_MIN=30,
+    )
+
+
+@pytest.fixture
+def valid_prod_settings() -> Settings:
+    """Return valid production settings."""
+    return Settings(
+        APP_ENV="production",
+        CLOUDPILOT_API_KEY=TEST_VALID_KEY,
+        ALLOWED_ORIGIN="https://cloudpilot.example.com",
+        RATE_LIMIT_PER_MIN=30,
+    )
+
+
+@pytest.fixture
+def client(valid_dev_settings: Settings) -> TestClient:
+    """Create a TestClient with valid development settings."""
+    app = create_app(valid_dev_settings)
+    app.dependency_overrides[get_settings] = lambda: valid_dev_settings
+    return TestClient(app)
