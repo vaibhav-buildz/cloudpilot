@@ -32,29 +32,56 @@ def _extract_numeric_fields(obj: Any, path: str = "") -> dict[str, float]:
     return numerics
 
 
-def test_report_only_preserves_numeric_metrics() -> None:
+def test_report_only_preserves_numeric_metrics(tmp_path: Path) -> None:
     """Verify --report-only regenerates reports without changing numeric values."""
-    summary_path = REPO_ROOT / "results" / "study_summary.json"
-    assert summary_path.exists(), "results/study_summary.json must exist"
+    seed1 = REPO_ROOT / "results" / "study_seed_1.json"
+    if seed1.exists():
+        summary_path = REPO_ROOT / "results" / "study_summary.json"
+        assert summary_path.exists(), "results/study_summary.json must exist"
 
-    with open(summary_path, encoding="utf-8") as f:
-        baseline_summary = json.load(f)
+        with open(summary_path, encoding="utf-8") as f:
+            baseline_summary = json.load(f)
 
-    baseline_numerics = _extract_numeric_fields(baseline_summary)
+        baseline_numerics = _extract_numeric_fields(baseline_summary)
 
-    # Re-run report generation
-    new_summary = run_study(report_only=True, write_markdown=True)
-    new_numerics = _extract_numeric_fields(new_summary)
+        # Re-run report generation
+        new_summary = run_study(report_only=True, write_markdown=True)
+        new_numerics = _extract_numeric_fields(new_summary)
 
-    # Every numeric key present in baseline must match identically in the new report
-    assert len(baseline_numerics) > 0
-    for key, base_val in baseline_numerics.items():
-        assert key in new_numerics, f"Numeric key {key} missing in regenerated summary"
-        assert new_numerics[key] == pytest.approx(base_val, abs=1e-9), (
-            f"Value mismatch for {key}: expected {base_val}, got {new_numerics[key]}"
+        # Every numeric key present in baseline must match identically in the new report
+        assert len(baseline_numerics) > 0
+        for key, base_val in baseline_numerics.items():
+            assert key in new_numerics, f"Numeric key {key} missing in regenerated summary"
+            assert new_numerics[key] == pytest.approx(base_val, abs=1e-9), (
+                f"Value mismatch for {key}: expected {base_val}, got {new_numerics[key]}"
+            )
+
+        # Verify headline verdicts follow the refined 3-state D6 rules
+        assert new_summary["headline"]["h1"]["verdict"] == "NOT_SUPPORTED"
+        assert new_summary["headline"]["h2"]["verdict"] == "NOT_SUPPORTED"
+        assert new_summary["headline"]["h3"]["verdict"] == "SUPPORTED"
+    else:
+        # In a fresh git checkout where seed files are gitignored, generate small test seeds
+        s_initial = run_study(
+            seeds=[1, 2],
+            n_services=20,
+            n_steps=1200,
+            target_violation=0.01,
+            results_dir=tmp_path,
+            write_markdown=False,
+            n_estimators_override=5,
         )
+        base_numerics = _extract_numeric_fields(s_initial)
 
-    # Verify headline verdicts follow the refined 3-state D6 rules
-    assert new_summary["headline"]["h1"]["verdict"] == "NOT_SUPPORTED"
-    assert new_summary["headline"]["h2"]["verdict"] == "NOT_SUPPORTED"
-    assert new_summary["headline"]["h3"]["verdict"] == "SUPPORTED"
+        s_report = run_study(
+            seeds=[1, 2],
+            results_dir=tmp_path,
+            report_only=True,
+            write_markdown=False,
+        )
+        report_numerics = _extract_numeric_fields(s_report)
+
+        assert len(base_numerics) > 0
+        for key, base_val in base_numerics.items():
+            assert key in report_numerics
+            assert report_numerics[key] == pytest.approx(base_val, abs=1e-9)
