@@ -59,3 +59,7 @@ yarn-error.log*
 *.swo
 .DS_Store
 Thumbs.db
+
+# Study results (commit aggregate summary only)
+results/*
+!results/study_summary.json
