@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 import json
+import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
-from scripts.run_study import REPO_ROOT, run_study
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from scripts.run_study import run_study  # noqa: E402
 
 
 def _extract_numeric_fields(obj: Any, path: str = "") -> dict[str, float]:
