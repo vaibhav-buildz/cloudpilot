@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 import time
@@ -46,7 +47,8 @@ def generate_results_markdown(summary: dict[str, Any]) -> str:
         f"(95% median CI: [{h1['median_ci_lower_pp']:+.2f} pp, {h1['median_ci_upper_pp']:+.2f} pp]).  ",
         f"  - Secondary pooled paired bootstrap: **{h1['pooled_effect_pp']:+.2f} pp** "
         f"(95% CI: [{h1['pooled_ci_lower_pp']:+.2f} pp, {h1['pooled_ci_upper_pp']:+.2f} pp], "
-        f"p {'' if _format_p_value(h1['pooled_p_value']).startswith('<') else '= '}{_format_p_value(h1['pooled_p_value'])}).",
+        f"p {'' if _format_p_value(h1['pooled_p_value']).startswith('<') else '= '}"
+        f"{_format_p_value(h1['pooled_p_value'])}).",
         "",
         f"- **H2 (SERVICE Split, Non-Inferiority)**: **{h2['verdict']}** "
         f"({h2['support_count']}/{h2['total_seeds']} seeds supported within -1.0 pp margin).  ",
@@ -54,7 +56,8 @@ def generate_results_markdown(summary: dict[str, Any]) -> str:
         f"(95% median CI: [{h2['median_ci_lower_pp']:+.2f} pp, {h2['median_ci_upper_pp']:+.2f} pp]).  ",
         f"  - Secondary pooled paired bootstrap: **{h2['pooled_effect_pp']:+.2f} pp** "
         f"(95% CI: [{h2['pooled_ci_lower_pp']:+.2f} pp, {h2['pooled_ci_upper_pp']:+.2f} pp], "
-        f"p {'' if _format_p_value(h2['pooled_p_value']).startswith('<') else '= '}{_format_p_value(h2['pooled_p_value'])}).",
+        f"p {'' if _format_p_value(h2['pooled_p_value']).startswith('<') else '= '}"
+        f"{_format_p_value(h2['pooled_p_value'])}).",
         "",
         f"- **H3 (Operational Feasibility)**: **{h3['verdict']}** "
         f"({h3['support_count']}/{h3['total_seeds']} seeds supported with $\\le 1.5\\%$ violation).  ",
@@ -63,7 +66,12 @@ def generate_results_markdown(summary: dict[str, Any]) -> str:
         "",
         "---",
         "",
-        "## 2. Average Performance by Allocation Policy (TIME Split)",
+        "## 2. Average and Median Performance by Allocation Policy (TIME Split)",
+        "",
+        "> Savings are relative to the simulator's static request, which over-provisions "
+        "(static utilization about 16%); magnitudes depend on the generator.",
+        "",
+        "### Mean Metrics Across Seeds (TIME Split)",
         "",
         "| Policy | Category | Savings (%) | Violation (%) | Utilization (%) | Wastage (%) | Feasible Seeds |",
         "| :--- | :--- | :---: | :---: | :---: | :---: | :---: |",
@@ -79,9 +87,30 @@ def generate_results_markdown(summary: dict[str, Any]) -> str:
     lines.extend(
         [
             "",
+            "### Median Test Savings and Violation (TIME Split)",
+            "",
+            "| Policy | Category | Median Savings (%) | Median Violation (%) | Feasible Seeds |",
+            "| :--- | :--- | :---: | :---: | :---: |",
+        ]
+    )
+
+    for m in summary["methods_summary_time"]:
+        lines.append(
+            f"| `{m['name']}` | {m['category']} | {m['median_savings_pct']:.2f}% | "
+            f"{m['median_violation_pct']:.2f}% | {m['feasible_count']}/10 |"
+        )
+
+    lines.extend(
+        [
+            "",
             "---",
             "",
-            "## 3. Average Performance on Unseen Services (SERVICE Split)",
+            "## 3. Average and Median Performance on Unseen Services (SERVICE Split)",
+            "",
+            "> Savings are relative to the simulator's static request, which over-provisions "
+            "(static utilization about 16%); magnitudes depend on the generator.",
+            "",
+            "### Mean Metrics Across Seeds (SERVICE Split)",
             "",
             "| Policy | Category | Savings (%) | Violation (%) | Utilization (%) | Wastage (%) | Feasible Seeds |",
             "| :--- | :--- | :---: | :---: | :---: | :---: | :---: |",
@@ -98,21 +127,51 @@ def generate_results_markdown(summary: dict[str, Any]) -> str:
     lines.extend(
         [
             "",
+            "### Median Test Savings and Violation (SERVICE Split)",
+            "",
+            "| Policy | Category | Median Savings (%) | Median Violation (%) | Feasible Seeds |",
+            "| :--- | :--- | :---: | :---: | :---: |",
+        ]
+    )
+
+    for m in summary["methods_summary_service"]:
+        lines.append(
+            f"| `{m['name']}` | {m['category']} | {m['median_savings_pct']:.2f}% | "
+            f"{m['median_violation_pct']:.2f}% | {m['feasible_count']}/10 |"
+        )
+
+    lines.extend(
+        [
+            "",
             "---",
             "",
             "## 4. Per-Seed Detailed Breakdown",
             "",
-            "| Seed | TIME Comp | H1 Verdict | H1 Effect (CI) | SERVICE Comp | H2 Verdict | H2 Effect (CI) | H3 |",
-            "| :---: | :--- | :---: | :--- | :--- | :---: | :--- | :---: |",
+            "| Seed | TIME Comp | Comp Val Viol | Comp Test Viol | GBR Val Feas | GBR Test Viol | "
+            "H1 Verdict | H1 Effect (CI) | SERVICE Comp | Comp Val Viol | Comp Test Viol | "
+            "GBR Val Feas | GBR Test Viol | H2 Verdict | H2 Effect (CI) | H3 |",
+            "| :---: | :--- | :---: | :---: | :---: | :---: | :---: | :--- | "
+            ":--- | :---: | :---: | :---: | :---: | :---: | :--- | :---: |",
         ]
     )
 
     for row in summary["per_seed_breakdown"]:
-        h1_str = f"{row['h1_effect_pp']:+.2f} pp [{row['h1_ci_lower_pp']:+.2f}, {row['h1_ci_upper_pp']:+.2f}]"
-        h2_str = f"{row['h2_effect_pp']:+.2f} pp [{row['h2_ci_lower_pp']:+.2f}, {row['h2_ci_upper_pp']:+.2f}]"
+        h1_str = (
+            f"{row['h1_effect_pp']:+.2f} pp [{row['h1_ci_lower_pp']:+.2f}, "
+            f"{row['h1_ci_upper_pp']:+.2f}]"
+        )
+        h2_str = (
+            f"{row['h2_effect_pp']:+.2f} pp [{row['h2_ci_lower_pp']:+.2f}, "
+            f"{row['h2_ci_upper_pp']:+.2f}]"
+        )
         lines.append(
-            f"| {row['seed']} | `{row['time_comparator']}` | {row['h1_verdict']} | {h1_str} | "
-            f"`{row['service_comparator']}` | {row['h2_verdict']} | {h2_str} | {row['h3_verdict']} |"
+            f"| {row['seed']} | `{row['time_comparator']}` | {row['time_comp_val_viol']} | "
+            f"{row['time_comp_test_viol']:.2f}% | {row['time_gbr_val_feas']} | "
+            f"{row['time_gbr_test_viol']:.2f}% | {row['h1_verdict']} | {h1_str} | "
+            f"`{row['service_comparator']}` | {row['service_comp_val_viol']} | "
+            f"{row['service_comp_test_viol']:.2f}% | {row['service_gbr_val_feas']} | "
+            f"{row['service_gbr_test_viol']:.2f}% | {row['h2_verdict']} | {h2_str} | "
+            f"{row['h3_verdict']} |"
         )
 
     lines.append("")
@@ -127,6 +186,7 @@ def run_study(
     results_dir: Path | None = None,
     write_markdown: bool = True,
     n_estimators_override: int | None = None,
+    report_only: bool = False,
 ) -> dict[str, Any]:
     """Execute multi-seed study, compute aggregates, and write summary artifacts."""
     if seeds is None:
@@ -137,43 +197,55 @@ def run_study(
 
     seed_results: list[dict[str, Any]] = []
 
-    for seed in seeds:
-        seed_path = out_dir / f"study_seed_{seed}.json"
-        if seed_path.exists():
+    if report_only:
+        sys.stdout.write("[Report-Only] Loading existing seed results without simulation...\n")
+        sys.stdout.flush()
+        for seed in seeds:
+            seed_path = out_dir / f"study_seed_{seed}.json"
+            if not seed_path.exists():
+                raise FileNotFoundError(
+                    f"Missing {seed_path}. Cannot generate report in --report-only mode."
+                )
             with open(seed_path, encoding="utf-8") as f:
                 res = json.load(f)
-            # Recompute if old v1 format lacks per_service_sum_a
-            if "per_service_sum_a" in res["time_split"]["methods"]["GBR_q95"]:
-                sys.stdout.write(
-                    f"[Seed {seed:2d}/{len(seeds)}] Skipping (already completed in v2 format).\n"
-                )
-                sys.stdout.flush()
-                seed_results.append(res)
-                continue
+            seed_results.append(res)
+    else:
+        for seed in seeds:
+            seed_path = out_dir / f"study_seed_{seed}.json"
+            if seed_path.exists():
+                with open(seed_path, encoding="utf-8") as f:
+                    res = json.load(f)
+                if "per_service_sum_a" in res["time_split"]["methods"]["GBR_q95"]:
+                    sys.stdout.write(
+                        f"[Seed {seed:2d}/{len(seeds)}] Skipping (already completed in v2 format).\n"
+                    )
+                    sys.stdout.flush()
+                    seed_results.append(res)
+                    continue
 
-        sys.stdout.write(
-            f"[Seed {seed:2d}/{len(seeds)}] Starting simulation "
-            f"(services={n_services}, steps={n_steps})...\n"
-        )
-        sys.stdout.flush()
-        t0 = time.time()
+            sys.stdout.write(
+                f"[Seed {seed:2d}/{len(seeds)}] Starting simulation "
+                f"(services={n_services}, steps={n_steps})...\n"
+            )
+            sys.stdout.flush()
+            t0 = time.time()
 
-        res = run_experiment(
-            seed=seed,
-            n_services=n_services,
-            n_steps=n_steps,
-            target_violation=target_violation,
-            timeout_seconds=7200.0,
-            n_estimators_override=n_estimators_override,
-        )
-        elapsed = time.time() - t0
-        sys.stdout.write(f"[Seed {seed:2d}/{len(seeds)}] Finished in {elapsed:.1f}s.\n")
-        sys.stdout.flush()
+            res = run_experiment(
+                seed=seed,
+                n_services=n_services,
+                n_steps=n_steps,
+                target_violation=target_violation,
+                timeout_seconds=7200.0,
+                n_estimators_override=n_estimators_override,
+            )
+            elapsed = time.time() - t0
+            sys.stdout.write(f"[Seed {seed:2d}/{len(seeds)}] Finished in {elapsed:.1f}s.\n")
+            sys.stdout.flush()
 
-        with open(seed_path, "w", encoding="utf-8") as f:
-            json.dump(res, f, indent=2)
+            with open(seed_path, "w", encoding="utf-8") as f:
+                json.dump(res, f, indent=2)
 
-        seed_results.append(res)
+            seed_results.append(res)
 
     # -------------------------------------------------------------
     # Aggregation & Headline Metrics
@@ -191,7 +263,6 @@ def run_study(
     h1_lowers = [r["time_split"]["h1"]["ci_lower"] * 100.0 for r in seed_results]
     h1_uppers = [r["time_split"]["h1"]["ci_upper"] * 100.0 for r in seed_results]
 
-    # Pooled bootstrap across all seeds for TIME split using pooled per-service sums
     pooled_a_time = []
     pooled_b_time = []
     pooled_static_time = []
@@ -207,10 +278,13 @@ def run_study(
         pooled_a_time, pooled_b_time, pooled_static_time, seed=42
     )
 
-    h1_headline = {
-        "verdict": "SUPPORTED"
+    h1_verdict = (
+        "SUPPORTED"
         if h1_supported == total_seeds
-        else "MIXED/NOT_SUPPORTED",
+        else ("NOT_SUPPORTED" if h1_supported == 0 else "MIXED")
+    )
+    h1_headline = {
+        "verdict": h1_verdict,
         "support_count": h1_supported,
         "total_seeds": total_seeds,
         "median_effect_pp": float(np.median(h1_effects)),
@@ -248,10 +322,13 @@ def run_study(
         pooled_a_srv, pooled_b_srv, pooled_static_srv, seed=42
     )
 
-    h2_headline = {
-        "verdict": "SUPPORTED"
+    h2_verdict = (
+        "SUPPORTED"
         if h2_supported == total_seeds
-        else "MIXED/NOT_SUPPORTED",
+        else ("NOT_SUPPORTED" if h2_supported == 0 else "MIXED")
+    )
+    h2_headline = {
+        "verdict": h2_verdict,
         "support_count": h2_supported,
         "total_seeds": total_seeds,
         "median_effect_pp": float(np.median(h2_effects)),
@@ -312,7 +389,9 @@ def run_study(
                     "name": m_name,
                     "category": cat,
                     "savings_pct": float(np.mean(saves)),
+                    "median_savings_pct": float(np.median(saves)),
                     "violation_pct": float(np.mean(viols)),
+                    "median_violation_pct": float(np.median(viols)),
                     "utilization_pct": float(np.mean(utils)),
                     "wastage_pct": float(np.mean(wastes)),
                     "feasible_count": feasible,
@@ -332,15 +411,47 @@ def run_study(
         h1_dict = r["time_split"]["h1"]
         h2_dict = r["service_split"]["h2"]
         h3_dict = r["h3"]
+        t_comp = r["time_split"]["comparator"]
+        t_comp_m = r["time_split"]["methods"][t_comp]
+        t_gbr_m = r["time_split"]["methods"]["GBR_q95"]
+
+        s_comp = r["service_split"]["comparator"]
+        s_comp_m = r["service_split"]["methods"][s_comp]
+        s_gbr_m = r["service_split"]["methods"]["GBR_q95"]
+
         per_seed_breakdown.append(
             {
                 "seed": seed_id,
-                "time_comparator": r["time_split"]["comparator"],
+                "time_comparator": t_comp,
+                "time_comp_val_viol": (
+                    "<= 1.00%"
+                    if r["time_split"]["comparator_is_feasible"]
+                    else "> 1.00%"
+                ),
+                "time_comp_test_viol": t_comp_m["violation_rate"] * 100.0,
+                "time_gbr_val_feas": (
+                    "<= 1.00%"
+                    if t_gbr_m["is_feasible"]
+                    else "> 1.00%"
+                ),
+                "time_gbr_test_viol": t_gbr_m["violation_rate"] * 100.0,
                 "h1_verdict": h1_dict["verdict"],
                 "h1_effect_pp": h1_dict["estimate"] * 100.0,
                 "h1_ci_lower_pp": h1_dict["ci_lower"] * 100.0,
                 "h1_ci_upper_pp": h1_dict["ci_upper"] * 100.0,
-                "service_comparator": r["service_split"]["comparator"],
+                "service_comparator": s_comp,
+                "service_comp_val_viol": (
+                    "<= 1.00%"
+                    if r["service_split"]["comparator_is_feasible"]
+                    else "> 1.00%"
+                ),
+                "service_comp_test_viol": s_comp_m["violation_rate"] * 100.0,
+                "service_gbr_val_feas": (
+                    "<= 1.00%"
+                    if s_gbr_m["is_feasible"]
+                    else "> 1.00%"
+                ),
+                "service_gbr_test_viol": s_gbr_m["violation_rate"] * 100.0,
                 "h2_verdict": h2_dict["verdict"],
                 "h2_effect_pp": h2_dict["estimate"] * 100.0,
                 "h2_ci_lower_pp": h2_dict["ci_lower"] * 100.0,
@@ -385,6 +496,16 @@ def run_study(
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Execute 10-seed simulation study or regenerate report."
+    )
+    parser.add_argument(
+        "--report-only",
+        action="store_true",
+        help="Regenerate summary and markdown from existing seed results without re-running simulations.",
+    )
+    args = parser.parse_args()
+
     t_start = time.time()
-    run_study()
-    sys.stdout.write(f"\nAll seeds completed in {time.time() - t_start:.1f}s.\n")
+    run_study(report_only=args.report_only)
+    sys.stdout.write(f"\nAll tasks completed in {time.time() - t_start:.1f}s.\n")
