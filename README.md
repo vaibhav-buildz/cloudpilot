@@ -11,7 +11,7 @@ The architecture consists of:
 - Frontend: React + Vite web dashboard deployed on Vercel (planned).
 - Storage: Supabase Postgres for workload trace and allocation logs (planned).
 
-Note: Only CPU resources are modeled in this phase of the project.
+Note: Only CPU resources are modeled in this project. Memory (RAM) and other physical subsystems are strictly out of scope.
 
 ## Project Structure
 
@@ -23,14 +23,34 @@ cloudpilot/
   .gitleaks.toml              # Secret detection rules
   .pre-commit-config.yaml     # Pre-commit git hooks
   render.yaml                 # Render deployment blueprint
+  docs/
+    hypotheses.md             # Pre-registered hypotheses (H1-H3)
+    method.md                 # Workload generation, splits, and margin selection methodology
   backend/
-    app/                      # FastAPI application code
+    app/
+      config.py               # Settings and fail-closed validation
+      logging_setup.py        # Structured JSON logs with secret masking
+      main.py                 # FastAPI application factory
+      ratelimit.py            # In-memory sliding window rate limiter
+      security.py             # Constant-time HMAC API key auth
+      engine/
+        generator.py          # Synthetic seeded workload generation
+        csv_loader.py         # CSV workload parser without pandas
+        features.py           # Past-only feature extraction (shift-before-rolling)
+        baselines.py          # Static, rolling max, rolling p99, EWMA baselines
+        models.py             # LR, DT, RF, GB, GBR_q95 models
+        margins.py            # Safety margin grid application & selection
+        evaluate.py           # Evaluation metrics over identical slices
+        bootstrap.py          # Paired bootstrap across services
+        runner.py             # Master experiment runner (TIME & SERVICE splits)
+      routes/
+        health.py             # /health (liveness) and /ready (readiness)
+        simulate.py           # /api/simulate, /api/simulate/csv, /api/methods
     tests/                    # Pytest test suite
     Dockerfile                # Container image definition
     pyproject.toml            # Tool configuration (Ruff, Pytest)
-    requirements.txt          # Production dependencies
+    requirements.txt          # Production dependencies (numpy, scikit-learn, etc.)
     requirements-dev.txt      # Development dependencies
-  docs/                       # Project documentation
   frontend/                   # React + Vite dashboard
   scripts/
     make_env.py               # Local environment file generator
@@ -96,12 +116,44 @@ ruff format --check .
 uvicorn app.main:create_app --factory --reload --host 127.0.0.1 --port 8000
 ```
 
-Verify the service is running:
-- Health check (public): `curl http://127.0.0.1:8000/health`
-- Readiness check (public): `curl http://127.0.0.1:8000/ready`
-- Protected ping:
+## API Endpoints
+
+### Health & Readiness
+- `GET /health`: Liveness probe (public).
   ```bash
-  curl -H "X-API-Key: <your-key-from-.env>" http://127.0.0.1:8000/api/ping
+  curl http://127.0.0.1:8000/health
+  ```
+- `GET /ready`: Readiness probe (public).
+  ```bash
+  curl http://127.0.0.1:8000/ready
+  ```
+
+### Protected Endpoints (`X-API-Key` required)
+- `GET /api/ping`: Placeholder route to test authentication and rate limiting.
+  ```bash
+  curl -H "X-API-Key: <CLOUDPILOT_API_KEY>" http://127.0.0.1:8000/api/ping
+  ```
+- `GET /api/methods`: List all available baseline heuristics and ML models.
+  ```bash
+  curl -H "X-API-Key: <CLOUDPILOT_API_KEY>" http://127.0.0.1:8000/api/methods
+  ```
+- `POST /api/simulate`: Run simulation on synthetic seeded workload across TIME and SERVICE splits.
+  ```bash
+  curl -X POST http://127.0.0.1:8000/api/simulate \
+    -H "Content-Type: application/json" \
+    -H "X-API-Key: <CLOUDPILOT_API_KEY>" \
+    -d '{
+      "seed": 42,
+      "n_services": 8,
+      "n_steps": 600,
+      "target_violation": 0.01
+    }'
+  ```
+- `POST /api/simulate/csv`: Run allocation experiment on uploaded workload CSV (columns: `service_id`, `timestamp`, `cpu_demand`).
+  ```bash
+  curl -X POST http://127.0.0.1:8000/api/simulate/csv \
+    -H "X-API-Key: <CLOUDPILOT_API_KEY>" \
+    -F "file=@sample_workload.csv"
   ```
 
 ## Current Status
@@ -109,5 +161,8 @@ Verify the service is running:
 - Core FastAPI backend factory with fail-closed configuration validation.
 - API key authentication (`X-API-Key`) with constant-time HMAC comparison.
 - In-memory sliding window rate limiting on `/api` endpoints.
-- Strict CORS, payload size enforcement (1 MB max), and security headers.
+- Seeded synthetic workload generator and CSV loader without pandas.
+- Past-only feature extraction with shift-before-rolling logic and zero future data leakage.
+- Deterministic safety margin selection on validation grids.
+- Pre-registered hypotheses (H1-H3) and paired bootstrap statistical testing over services.
 - Comprehensive automated test suite and GitHub Actions CI workflow.
