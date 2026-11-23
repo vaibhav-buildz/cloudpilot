@@ -45,6 +45,16 @@ Workload generator logic, safety margin evaluation grids, ML model hyperparamete
 - **Rule Clarification**: `hypotheses.md` stated that the comparator is the feasible baseline with the highest validation savings. It did not explicitly define behavior when all baseline methods fail validation feasibility ($\le 1.0\%$ violation).
 - **Rule Adopted Prior to Re-run**: If no baseline method is validation-feasible, the comparator defaults to `static` (multiplicative 1.00), and the resulting H1/H2 hypothesis verdicts are reported with the explicit annotation `"vs infeasible comparator"`.
 
+### D6: Disambiguation of Headline Verdict Labels and Comprehensive Validation vs Test Reporting
+- **Date**: 2026-11-24
+- **Scope**: Reporting presentation only (`scripts/run_study.py`, `docs/results.md`, `results/study_summary.json`). No engine code, models, generator parameters, seeds, or underlying simulation metrics are altered.
+- **Headline Verdict Rule**: In v2 reporting, headline verdicts used a composite label `"MIXED/NOT_SUPPORTED"` whenever a hypothesis was not supported by all 10 seeds. To eliminate ambiguity, the reporting rule is refined to three distinct states:
+  - `SUPPORTED`: All 10 seeds support the hypothesis ($10/10$).
+  - `NOT_SUPPORTED`: Zero seeds support the hypothesis ($0/10$).
+  - `MIXED`: A non-zero subset of seeds support the hypothesis ($1 \le k < 10$).
+- **Per-Seed Table Clarity (Validation vs Test Violation)**: An earlier discussion table inadvertently displayed test violation under a validation violation heading. The engine itself executed the pre-registered protocol correctly (selecting margins strictly on validation data). To provide full transparency, per-seed breakdown tables now explicitly report BOTH the validation violation and the test violation for the comparator policy and for `GBR_q95`.
+- **Median Metric Tables and Contextual Note**: In addition to mean performance metrics across seeds, reporting now includes tables of median test savings and test violation per method for both TIME and SERVICE splits. A contextual note is added: *"Savings are relative to the simulator's static request, which over-provisions (static utilization about 16%); magnitudes depend on the generator."* No numerical results or underlying simulations were altered.
+
 ---
 
 ## 3. Side-by-Side Headline Comparison (v1 vs v2)
