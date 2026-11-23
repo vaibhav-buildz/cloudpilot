@@ -49,13 +49,16 @@ Workload generator logic, safety margin evaluation grids, ML model hyperparamete
 
 ## 3. Side-by-Side Headline Comparison (v1 vs v2)
 
-*(To be updated upon completion of the v2 study execution)*
-
-| Metric / Hypothesis | Study v1 (INVALID) | Study v2 (Corrected) |
+| Metric / Hypothesis | Study v1 (INVALID - Bugs D1-D4) | Study v2 (Corrected) |
 | :--- | :--- | :--- |
-| **H1 Verdict (TIME)** | MIXED/NOT_SUPPORTED (8/10) | *Pending v2 run* |
-| **H1 Median Effect** | +79.57 pp [+68.33, +92.80] | *Pending v2 run* |
-| **H2 Verdict (SERVICE)** | MIXED/NOT_SUPPORTED (6/10) | *Pending v2 run* |
-| **H2 Median Effect** | +70.84 pp [+50.52, +91.52] | *Pending v2 run* |
-| **H3 Verdict (Feasibility)** | SUPPORTED (10/10) | *Pending v2 run* |
-| **H3 Max Test Violation** | 1.12% | *Pending v2 run* |
+| **H1 Verdict (TIME)** | MIXED/NOT_SUPPORTED (8/10) | MIXED/NOT_SUPPORTED (0/10) |
+| **H1 Median Effect** | +79.57 pp [+68.33, +92.80] | -2.53 pp [-3.68, -1.31] |
+| **H1 Pooled Effect** | +95.20 pp [+89.87, +100.67] (p = 0.0000) | -2.19 pp [-2.58, -1.82] (p < 0.0001) |
+| **H2 Verdict (SERVICE)** | MIXED/NOT_SUPPORTED (6/10) | MIXED/NOT_SUPPORTED (0/10) |
+| **H2 Median Effect** | +70.84 pp [+50.52, +91.52] | -0.99 pp [-3.34, +1.27] |
+| **H2 Pooled Effect** | +80.62 pp [+72.97, +88.65] (p = 0.0000) | -0.93 pp [-1.60, -0.26] (p = 0.0062) |
+| **H3 Verdict (Feasibility)** | SUPPORTED (10/10) | SUPPORTED (10/10) |
+| **H3 Max Test Violation (TIME)** | 1.00% | 1.03% |
+| **H3 Max Test Violation (SERVICE)** | 1.12% | 1.14% |
+| **TIME Split Comparator** | `static` (4 seeds) / `rolling_p99` (6 seeds) | `rolling_max_48` (10/10 seeds) |
+| **SERVICE Split Comparator** | `static` (1 seed) / `rolling_p99` (9 seeds) | `rolling_max_48` (10/10 seeds) |
