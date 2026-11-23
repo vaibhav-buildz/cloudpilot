@@ -1,4 +1,6 @@
-# CloudPilot 10-Seed Simulation Study Results
+> **INVALID: produced with bugs D1-D4, kept for transparency only**
+
+# CloudPilot 10-Seed Simulation Study Results (v1 - INVALID)
 
 > **Simulated data. Results describe the simulator, not real clouds.**
 
