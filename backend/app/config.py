@@ -52,6 +52,12 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "Production requires ALLOWED_ORIGIN to be set and cannot contain wildcard '*'."
                 )
+            if not self.SUPABASE_URL or not self.SUPABASE_URL.strip().startswith("https://"):
+                raise ValueError(
+                    "Production requires SUPABASE_URL to be set with an https:// scheme."
+                )
+            if not self.SUPABASE_SERVICE_KEY or not self.SUPABASE_SERVICE_KEY.strip():
+                raise ValueError("Production requires SUPABASE_SERVICE_KEY to be set.")
         else:
             # In development, missing/short key is allowed only if DEV_AUTH_DISABLED is true
             if (not key or len(key) < 32) and not self.DEV_AUTH_DISABLED:

@@ -9,7 +9,7 @@ CloudPilot is a final-year B.Tech project focusing on intelligent CPU resource a
 The architecture consists of:
 - Backend: Python 3.11+ FastAPI service deployed on Render.
 - Frontend: React + Vite web dashboard deployed on Vercel (planned).
-- Storage: Supabase Postgres for workload trace and allocation logs (planned).
+- Storage: Supabase Postgres via PostgREST with Row Level Security (RLS) for simulation run history, with in-memory fallback for local development.
 
 Note: Only CPU resources are modeled in this project. Memory (RAM) and other physical subsystems are strictly out of scope.
 
@@ -26,6 +26,10 @@ cloudpilot/
   docs/
     hypotheses.md             # Pre-registered hypotheses (H1-H3)
     method.md                 # Workload generation, splits, and margin selection methodology
+    database.md               # Persistence schema, RLS policies, and migration instructions
+  supabase/
+    migrations/
+      0001_simulation_runs.sql # PostgREST table schema, index, and RLS definitions
   backend/
     app/
       config.py               # Settings and fail-closed validation
@@ -33,6 +37,8 @@ cloudpilot/
       main.py                 # FastAPI application factory
       ratelimit.py            # In-memory sliding window rate limiter
       security.py             # Constant-time HMAC API key auth
+      db/
+        repository.py         # RunRepository interface, PostgREST & in-memory stores
       engine/
         generator.py          # Synthetic seeded workload generation
         csv_loader.py         # CSV workload parser without pandas
@@ -46,6 +52,7 @@ cloudpilot/
       routes/
         health.py             # /health (liveness) and /ready (readiness)
         simulate.py           # /api/simulate, /api/simulate/csv, /api/methods
+        runs.py               # /api/runs (GET, GET /:id, DELETE /:id)
     tests/                    # Pytest test suite
     Dockerfile                # Container image definition
     pyproject.toml            # Tool configuration (Ruff, Pytest)
@@ -68,8 +75,8 @@ cloudpilot/
 | `SIM_MAX_STEPS` | integer | `1000` | No | Maximum discrete time steps for simulation runs. |
 | `SIM_MAX_SERVICES` | integer | `20` | No | Maximum concurrent services simulated. |
 | `SIM_TIMEOUT_SECONDS` | integer | `60` | No | Timeout in seconds for simulation execution. |
-| `SUPABASE_URL` | string | None | No | Supabase project URL (optional in initial phase). |
-| `SUPABASE_SERVICE_KEY` | string | None | No | Supabase service role key (optional in initial phase). |
+| `SUPABASE_URL` | string | None | Yes | Supabase project URL (`https://` scheme required in production). |
+| `SUPABASE_SERVICE_KEY` | string | None | Yes | Supabase service role API key for PostgREST control-plane access. |
 
 ## Local Development Setup
 
@@ -155,12 +162,26 @@ uvicorn app.main:create_app --factory --reload --host 127.0.0.1 --port 8000
     -H "X-API-Key: <CLOUDPILOT_API_KEY>" \
     -F "file=@sample_workload.csv"
   ```
+- `GET /api/runs`: List historical simulation runs for authenticated client (supports `?limit=20&offset=0`, max limit 50).
+  ```bash
+  curl -H "X-API-Key: <CLOUDPILOT_API_KEY>" "http://127.0.0.1:8000/api/runs?limit=10"
+  ```
+- `GET /api/runs/{id}`: Retrieve full details and evaluation metrics for a specific simulation run by UUID.
+  ```bash
+  curl -H "X-API-Key: <CLOUDPILOT_API_KEY>" http://127.0.0.1:8000/api/runs/<RUN_UUID>
+  ```
+- `DELETE /api/runs/{id}`: Delete a simulation run record scoped to the authenticated client.
+  ```bash
+  curl -X DELETE -H "X-API-Key: <CLOUDPILOT_API_KEY>" http://127.0.0.1:8000/api/runs/<RUN_UUID>
+  ```
 
 ## Current Status
 
 - Core FastAPI backend factory with fail-closed configuration validation.
 - API key authentication (`X-API-Key`) with constant-time HMAC comparison.
 - In-memory sliding window rate limiting on `/api` endpoints.
+- PostgREST-backed persistence layer for Supabase with Row Level Security (RLS) and thread-safe in-memory fallback.
+- Client run history management with automatic retention pruning (latest 50 runs per client).
 - Seeded synthetic workload generator and CSV loader without pandas.
 - Past-only feature extraction with shift-before-rolling logic and zero future data leakage.
 - Deterministic safety margin selection on validation grids.

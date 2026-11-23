@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
+import time
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
@@ -13,6 +15,9 @@ from app.config import Settings, get_settings
 from app.engine.csv_loader import MAX_CSV_BYTES, load_workload_from_csv
 from app.engine.runner import run_experiment
 from app.ratelimit import rate_limiter
+from app.security import verify_api_key
+
+logger = logging.getLogger("cloudpilot")
 
 router = APIRouter(tags=["Simulation"])
 
@@ -129,6 +134,7 @@ async def simulate_workload(
     req: SimulateRequest,
     request: Request,
     settings: Annotated[Settings, Depends(get_settings)],
+    client_id: Annotated[str, Depends(verify_api_key)],
 ) -> dict[str, Any]:
     """Run simulation on synthetic seeded workload across TIME and SERVICE splits."""
     if req.n_services > settings.SIM_MAX_SERVICES:
@@ -149,13 +155,14 @@ async def simulate_workload(
             ),
         )
 
-    client_id = rate_limiter.extract_client_id(request)
-    if not concurrency_gate.acquire(client_id):
+    gate_client_id = rate_limiter.extract_client_id(request)
+    if not concurrency_gate.acquire(gate_client_id):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="A simulation is already active for this client. Please wait for completion.",
         )
 
+    t_start = time.perf_counter()
     try:
         result = await asyncio.wait_for(
             asyncio.to_thread(
@@ -168,6 +175,39 @@ async def simulate_workload(
             ),
             timeout=float(settings.SIM_TIMEOUT_SECONDS) + 5.0,
         )
+        duration_ms = round((time.perf_counter() - t_start) * 1000)
+
+        # Best-effort persist run
+        repo = getattr(request.app.state, "repo", None)
+        saved = False
+        run_record = None
+        if repo is not None:
+            try:
+                run_record = await repo.save_run(
+                    client_id=client_id,
+                    source="simulated",
+                    params={
+                        "seed": req.seed,
+                        "n_services": req.n_services,
+                        "n_steps": req.n_steps,
+                        "target_violation": req.target_violation,
+                    },
+                    status="ok",
+                    result=result,
+                    duration_ms=duration_ms,
+                )
+                await repo.prune(client_id=client_id, keep=50)
+                saved = True
+            except Exception as exc:
+                logger.warning(
+                    "Failed to persist simulation run",
+                    extra={"error": type(exc).__name__, "client_id": client_id},
+                )
+                saved = False
+
+        result["saved"] = saved
+        if run_record and "id" in run_record:
+            result["run_id"] = run_record["id"]
         return result
     except TimeoutError as exc:
         raise HTTPException(
@@ -180,7 +220,7 @@ async def simulate_workload(
             detail=f"Simulation failed: {exc}",
         ) from exc
     finally:
-        concurrency_gate.release(client_id)
+        concurrency_gate.release(gate_client_id)
 
 
 @router.post("/simulate/csv")
@@ -188,6 +228,7 @@ async def simulate_csv_workload(
     file: Annotated[UploadFile, File(...)],
     request: Request,
     settings: Annotated[Settings, Depends(get_settings)],
+    client_id: Annotated[str, Depends(verify_api_key)],
     target_violation: float = Query(default=0.01, ge=0.005, le=0.05),
 ) -> dict[str, Any]:
     """Execute allocation experiment on user-uploaded workload CSV."""
@@ -227,13 +268,14 @@ async def simulate_csv_workload(
             ),
         )
 
-    client_id = rate_limiter.extract_client_id(request)
-    if not concurrency_gate.acquire(client_id):
+    gate_client_id = rate_limiter.extract_client_id(request)
+    if not concurrency_gate.acquire(gate_client_id):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="A simulation is already active for this client. Please wait for completion.",
         )
 
+    t_start = time.perf_counter()
     try:
         result = await asyncio.wait_for(
             asyncio.to_thread(
@@ -247,6 +289,38 @@ async def simulate_csv_workload(
             ),
             timeout=float(settings.SIM_TIMEOUT_SECONDS) + 5.0,
         )
+        duration_ms = round((time.perf_counter() - t_start) * 1000)
+
+        # Best-effort persist run without saving CSV content or file names
+        repo = getattr(request.app.state, "repo", None)
+        saved = False
+        run_record = None
+        if repo is not None:
+            try:
+                run_record = await repo.save_run(
+                    client_id=client_id,
+                    source="csv",
+                    params={
+                        "n_services": n_services,
+                        "n_steps": n_steps,
+                        "target_violation": target_violation,
+                    },
+                    status="ok",
+                    result=result,
+                    duration_ms=duration_ms,
+                )
+                await repo.prune(client_id=client_id, keep=50)
+                saved = True
+            except Exception as exc:
+                logger.warning(
+                    "Failed to persist CSV simulation run",
+                    extra={"error": type(exc).__name__, "client_id": client_id},
+                )
+                saved = False
+
+        result["saved"] = saved
+        if run_record and "id" in run_record:
+            result["run_id"] = run_record["id"]
         return result
     except TimeoutError as exc:
         raise HTTPException(
@@ -259,4 +333,4 @@ async def simulate_csv_workload(
             detail=f"Simulation failed: {exc}",
         ) from exc
     finally:
-        concurrency_gate.release(client_id)
+        concurrency_gate.release(gate_client_id)

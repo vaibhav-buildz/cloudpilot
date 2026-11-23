@@ -13,9 +13,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import Settings, get_settings
+from app.db.repository import get_repository
 from app.logging_setup import setup_logging
 from app.ratelimit import rate_limiter
 from app.routes.health import router as health_router
+from app.routes.runs import router as runs_router
 from app.routes.simulate import router as simulate_router
 from app.security import verify_api_key
 
@@ -32,6 +34,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Initialize structured JSON logging
     setup_logging()
 
+    # Initialize persistence repository
+    repo = get_repository(app_settings)
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info(
@@ -39,6 +44,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             extra={"app_env": app_settings.APP_ENV},
         )
         yield
+        if hasattr(repo, "aclose"):
+            await repo.aclose()
         logger.info("CloudPilot control plane stopping")
 
     app = FastAPI(
@@ -48,8 +55,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
 
-    # Store settings and wire dependency override for consistent app instances
+    # Store settings, repository, and wire dependency override for consistent app instances
     app.state.settings = app_settings
+    app.state.repo = repo
     app.dependency_overrides[get_settings] = lambda: app_settings
 
     # Strict CORS configuration
@@ -148,6 +156,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"pong": True}
 
     api_router.include_router(simulate_router)
+    api_router.include_router(runs_router)
 
     app.include_router(api_router)
 

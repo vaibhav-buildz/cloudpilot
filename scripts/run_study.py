@@ -198,7 +198,9 @@ def run_study(
     seed_results: list[dict[str, Any]] = []
 
     if report_only:
-        sys.stdout.write("[Report-Only] Loading existing seed results without simulation...\n")
+        sys.stdout.write(
+            "[Report-Only] Loading existing seed results without simulation...\n"
+        )
         sys.stdout.flush()
         for seed in seeds:
             seed_path = out_dir / f"study_seed_{seed}.json"
@@ -239,7 +241,9 @@ def run_study(
                 n_estimators_override=n_estimators_override,
             )
             elapsed = time.time() - t0
-            sys.stdout.write(f"[Seed {seed:2d}/{len(seeds)}] Finished in {elapsed:.1f}s.\n")
+            sys.stdout.write(
+                f"[Seed {seed:2d}/{len(seeds)}] Finished in {elapsed:.1f}s.\n"
+            )
             sys.stdout.flush()
 
             with open(seed_path, "w", encoding="utf-8") as f:
@@ -430,9 +434,7 @@ def run_study(
                 ),
                 "time_comp_test_viol": t_comp_m["violation_rate"] * 100.0,
                 "time_gbr_val_feas": (
-                    "<= 1.00%"
-                    if t_gbr_m["is_feasible"]
-                    else "> 1.00%"
+                    "<= 1.00%" if t_gbr_m["is_feasible"] else "> 1.00%"
                 ),
                 "time_gbr_test_viol": t_gbr_m["violation_rate"] * 100.0,
                 "h1_verdict": h1_dict["verdict"],
@@ -447,9 +449,7 @@ def run_study(
                 ),
                 "service_comp_test_viol": s_comp_m["violation_rate"] * 100.0,
                 "service_gbr_val_feas": (
-                    "<= 1.00%"
-                    if s_gbr_m["is_feasible"]
-                    else "> 1.00%"
+                    "<= 1.00%" if s_gbr_m["is_feasible"] else "> 1.00%"
                 ),
                 "service_gbr_test_viol": s_gbr_m["violation_rate"] * 100.0,
                 "h2_verdict": h2_dict["verdict"],

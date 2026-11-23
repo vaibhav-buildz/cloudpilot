@@ -58,10 +58,48 @@ def test_production_starts_with_valid_settings():
         APP_ENV="production",
         CLOUDPILOT_API_KEY=VALID_KEY,
         ALLOWED_ORIGIN="https://cloudpilot.example.com",
+        SUPABASE_URL="https://project.supabase.co",
+        SUPABASE_SERVICE_KEY="test-service-key-12345",
     )
     app = create_app(settings)
     assert app is not None
     assert settings.is_ready()[0] is True
+
+
+def test_production_fails_without_supabase_url():
+    """Production mode must refuse to start if SUPABASE_URL is missing."""
+    with pytest.raises(ValidationError, match="SUPABASE_URL"):
+        Settings(
+            APP_ENV="production",
+            CLOUDPILOT_API_KEY=VALID_KEY,
+            ALLOWED_ORIGIN="https://cloudpilot.example.com",
+            SUPABASE_URL="",
+            SUPABASE_SERVICE_KEY="test-service-key-12345",
+        )
+
+
+def test_production_fails_with_insecure_http_supabase_url():
+    """Production mode must refuse http:// SUPABASE_URL."""
+    with pytest.raises(ValidationError, match="https://"):
+        Settings(
+            APP_ENV="production",
+            CLOUDPILOT_API_KEY=VALID_KEY,
+            ALLOWED_ORIGIN="https://cloudpilot.example.com",
+            SUPABASE_URL="http://project.supabase.co",
+            SUPABASE_SERVICE_KEY="test-service-key-12345",
+        )
+
+
+def test_production_fails_without_supabase_service_key():
+    """Production mode must refuse to start if SUPABASE_SERVICE_KEY is missing."""
+    with pytest.raises(ValidationError, match="SUPABASE_SERVICE_KEY"):
+        Settings(
+            APP_ENV="production",
+            CLOUDPILOT_API_KEY=VALID_KEY,
+            ALLOWED_ORIGIN="https://cloudpilot.example.com",
+            SUPABASE_URL="https://project.supabase.co",
+            SUPABASE_SERVICE_KEY="",
+        )
 
 
 def test_dev_fails_without_key_when_dev_auth_disabled_is_false():

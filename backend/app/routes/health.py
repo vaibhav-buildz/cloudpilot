@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import JSONResponse
 
 from app.config import Settings, get_settings
@@ -17,10 +17,13 @@ def get_health() -> dict[str, str]:
 
 
 @router.get("/ready")
-def get_ready(settings: Settings = Depends(get_settings)) -> JSONResponse:
+async def get_ready(
+    request: Request,
+    settings: Settings = Depends(get_settings),
+) -> JSONResponse:
     """Readiness probe.
 
-    Returns 200 OK when configuration and dependencies are verified,
+    Returns 200 OK when configuration and database dependencies are verified,
     otherwise returns 503 Service Unavailable.
     """
     ready, reason = settings.is_ready()
@@ -29,6 +32,21 @@ def get_ready(settings: Settings = Depends(get_settings)) -> JSONResponse:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             content={"status": "not ready", "reason": reason},
         )
+
+    repo = getattr(request.app.state, "repo", None)
+    if repo is not None:
+        try:
+            is_healthy = await repo.ping()
+            if not is_healthy:
+                return JSONResponse(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    content={"status": "not ready", "reason": "Database ping failed"},
+                )
+        except Exception:
+            return JSONResponse(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content={"status": "not ready", "reason": "Database connection error"},
+            )
 
     return JSONResponse(
         status_code=status.HTTP_200_OK,
