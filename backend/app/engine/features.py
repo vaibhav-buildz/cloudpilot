@@ -75,6 +75,11 @@ def build_dataset(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Build matrix of past-only features X and target demand y across time steps.
 
+    Canonical layout guarantee:
+      Rows are organized in service-major order: service_idx outer, time_idx inner.
+      Row i corresponds to service service_idx[i] and time step time_idx[i].
+      y matches demand[selected_services, start_step:end_step].flatten() row for row.
+
     Returns:
       X: shape (n_samples, n_features)
       y: shape (n_samples,) representing actual demand at time t
@@ -100,24 +105,21 @@ def build_dataset(
             np.empty(0, dtype=int),
         )
 
-    all_X = []
-    all_y = []
-    all_srv = []
-    all_t = []
-
+    all_X_by_t = []
     for t in range(start_step, end_step):
-        X_t = extract_features_at_t(demand, t)  # Shape (total_services, n_features)
-        y_t = demand[:, t]
+        X_t = extract_features_at_t(demand, t)  # (total_services, n_features)
+        all_X_by_t.append(X_t[selected_services])  # (n_srv, n_features)
 
-        # Filter by selected services
-        all_X.append(X_t[selected_services])
-        all_y.append(y_t[selected_services])
-        all_srv.append(selected_services)
-        all_t.append(np.full(n_srv, t, dtype=int))
+    # Stack along time axis: shape (n_t, n_srv, n_features)
+    X_time_major = np.stack(all_X_by_t, axis=0)
 
-    return (
-        np.vstack(all_X),
-        np.concatenate(all_y),
-        np.concatenate(all_srv),
-        np.concatenate(all_t),
-    )
+    # Reorder to canonical service-major: (n_srv, n_t, n_features) -> (n_srv * n_t, n_features)
+    X = np.swapaxes(X_time_major, 0, 1).reshape(n_srv * n_t, len(FEATURE_NAMES))
+
+    # Target demand: slice shape (n_srv, n_t) and flatten in C-order
+    y = demand[selected_services, start_step:end_step].flatten()
+
+    srv_idx = np.repeat(selected_services, n_t)
+    t_idx = np.tile(np.arange(start_step, end_step), n_srv)
+
+    return X, y, srv_idx, t_idx
