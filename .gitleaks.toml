@@ -2,10 +2,12 @@
 useDefault = true
 
 [allowlist]
-description = "Allowlist example environment template only"
+description = "Ignore example environment files and virtual environment packages"
 paths = [
     '''(?i)^\.env\.example$''',
-    '''(?i)^backend/\.env\.example$'''
+    '''(?i)^backend/\.env\.example$''',
+    '''(?i)^\.venv/.*''',
+    '''(?i)^backend/\.venv/.*'''
 ]
 
 [[rules]]

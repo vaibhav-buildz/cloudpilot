@@ -16,6 +16,7 @@ from app.config import Settings, get_settings
 from app.logging_setup import setup_logging
 from app.ratelimit import rate_limiter
 from app.routes.health import router as health_router
+from app.routes.simulate import router as simulate_router
 from app.security import verify_api_key
 
 logger = logging.getLogger("cloudpilot")
@@ -68,14 +69,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Request ID handling
         request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex
 
-        # Enforce maximum request body size (1 MB limit)
+        # Enforce maximum request body size (1 MB default limit, bypassed for 5 MB CSV multipart)
         content_length = request.headers.get("content-length")
         if content_length:
             try:
-                if int(content_length) > app_settings.MAX_REQUEST_BODY_BYTES:
+                # If uploading to /api/simulate/csv, allow up to 5 MB
+                max_bytes = (
+                    5 * 1024 * 1024
+                    if request.url.path == "/api/simulate/csv"
+                    else app_settings.MAX_REQUEST_BODY_BYTES
+                )
+                if int(content_length) > max_bytes:
                     return JSONResponse(
                         status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                        content={"detail": "Request body exceeds maximum allowed size of 1 MB"},
+                        content={"detail": "Request body exceeds allowed size limit"},
                         headers={"X-Request-ID": request_id},
                     )
             except ValueError:
@@ -139,6 +146,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def ping() -> dict[str, bool]:
         """Protected placeholder endpoint to verify authentication and rate limiting."""
         return {"pong": True}
+
+    api_router.include_router(simulate_router)
 
     app.include_router(api_router)
 
