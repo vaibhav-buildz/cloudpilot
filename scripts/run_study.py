@@ -211,6 +211,12 @@ def run_study(
             with open(seed_path, encoding="utf-8") as f:
                 res = json.load(f)
             seed_results.append(res)
+
+        if seed_results and "parameters" in seed_results[0]:
+            params = seed_results[0]["parameters"]
+            n_services = params.get("n_services", n_services)
+            n_steps = params.get("n_steps", n_steps)
+            target_violation = params.get("target_violation", target_violation)
     else:
         for seed in seeds:
             seed_path = out_dir / f"study_seed_{seed}.json"

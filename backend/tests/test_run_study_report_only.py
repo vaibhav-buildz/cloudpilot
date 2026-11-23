@@ -75,6 +75,8 @@ def test_report_only_preserves_numeric_metrics(tmp_path: Path) -> None:
 
         s_report = run_study(
             seeds=[1, 2],
+            n_services=20,
+            n_steps=1200,
             results_dir=tmp_path,
             report_only=True,
             write_markdown=False,
