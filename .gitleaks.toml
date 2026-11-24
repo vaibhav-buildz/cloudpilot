@@ -6,6 +6,7 @@ description = "Ignore example environment files and virtual environment packages
 paths = [
     '''(?i)^\.env\.example$''',
     '''(?i)^backend/\.env\.example$''',
+    '''(?i)^frontend/\.env\.example$''',
     '''(?i)^\.venv/.*''',
     '''(?i)^backend/\.venv/.*'''
 ]
