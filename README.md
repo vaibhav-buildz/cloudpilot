@@ -8,7 +8,7 @@ CloudPilot is a final-year B.Tech project focusing on intelligent CPU resource a
 
 The architecture consists of:
 - Backend: Python 3.11+ FastAPI service deployed on Render.
-- Frontend: React + Vite web dashboard deployed on Vercel (planned).
+- Frontend: React + Vite web dashboard deployed on Vercel with serverless proxy. See [frontend/README.md](frontend/README.md).
 - Storage: Supabase Postgres via PostgREST with Row Level Security (RLS) for simulation run history, with in-memory fallback for local development.
 
 Note: Only CPU resources are modeled in this project. Memory (RAM) and other physical subsystems are strictly out of scope.
@@ -123,6 +123,19 @@ ruff format --check .
 uvicorn app.main:create_app --factory --reload --host 127.0.0.1 --port 8000
 ```
 
+### 6. Frontend Setup & Running Both Together
+In a separate terminal, start the frontend development server:
+
+```bash
+cd frontend
+npm ci
+npm run dev
+```
+
+The Vite dev server runs at `http://localhost:5173` and automatically proxies all `/api/...` calls to the local backend at `http://localhost:8000`.
+
+For full frontend documentation, testing instructions, and proxy security architecture, see [frontend/README.md](frontend/README.md).
+
 ## API Endpoints
 
 ### Health & Readiness
@@ -136,6 +149,10 @@ uvicorn app.main:create_app --factory --reload --host 127.0.0.1 --port 8000
   ```
 
 ### Protected Endpoints (`X-API-Key` required)
+- `GET /api/limits`: Returns operational bounds (max services, max steps, max CSV bytes, timeout).
+  ```bash
+  curl -H "X-API-Key: <CLOUDPILOT_API_KEY>" http://127.0.0.1:8000/api/limits
+  ```
 - `GET /api/ping`: Placeholder route to test authentication and rate limiting.
   ```bash
   curl -H "X-API-Key: <CLOUDPILOT_API_KEY>" http://127.0.0.1:8000/api/ping
