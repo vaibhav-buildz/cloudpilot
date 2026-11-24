@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     SIM_MAX_STEPS: int = Field(default=1000, ge=1)
     SIM_MAX_SERVICES: int = Field(default=20, ge=1)
     SIM_TIMEOUT_SECONDS: int = Field(default=60, ge=1)
+    GLOBAL_SIM_PER_MIN: int = Field(default=20, ge=1)
 
     # Optional Supabase integration for traces & persistence
     SUPABASE_URL: str | None = None

@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from app.config import Settings, get_settings
 from app.engine.csv_loader import MAX_CSV_BYTES, load_workload_from_csv
 from app.engine.runner import run_experiment
-from app.ratelimit import rate_limiter
+from app.ratelimit import global_sim_limiter, rate_limiter
 from app.security import verify_api_key
 
 logger = logging.getLogger("cloudpilot")
@@ -129,7 +129,7 @@ def get_available_methods() -> list[MethodInfo]:
     return AVAILABLE_METHODS
 
 
-@router.post("/simulate")
+@router.post("/simulate", dependencies=[Depends(global_sim_limiter.check)])
 async def simulate_workload(
     req: SimulateRequest,
     request: Request,
@@ -223,7 +223,7 @@ async def simulate_workload(
         concurrency_gate.release(gate_client_id)
 
 
-@router.post("/simulate/csv")
+@router.post("/simulate/csv", dependencies=[Depends(global_sim_limiter.check)])
 async def simulate_csv_workload(
     file: Annotated[UploadFile, File(...)],
     request: Request,

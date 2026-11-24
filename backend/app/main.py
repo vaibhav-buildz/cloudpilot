@@ -17,6 +17,7 @@ from app.db.repository import get_repository
 from app.logging_setup import setup_logging
 from app.ratelimit import rate_limiter
 from app.routes.health import router as health_router
+from app.routes.limits import router as limits_router
 from app.routes.runs import router as runs_router
 from app.routes.simulate import router as simulate_router
 from app.security import verify_api_key
@@ -157,6 +158,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     api_router.include_router(simulate_router)
     api_router.include_router(runs_router)
+    api_router.include_router(limits_router)
 
     app.include_router(api_router)
 
