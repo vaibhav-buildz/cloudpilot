@@ -4,6 +4,8 @@ export interface LimitsResponse {
   max_csv_bytes: number;
   timeout_seconds: number;
   history_limit: number;
+  extended_max_services?: number | null;
+  extended_max_steps?: number | null;
 }
 
 export interface MethodMetrics {
@@ -62,6 +64,7 @@ export interface WorkloadAnalysis {
 }
 
 export interface SimulationResponse {
+  mode?: "cpu-only";
   workload_analysis?: WorkloadAnalysis;
   run_id?: string;
   saved?: boolean;
@@ -84,6 +87,65 @@ export interface SimulationResponse {
   };
 }
 
+export type ExperimentMode = "cpu-only" | "extended-v1";
+
+export interface TaskMetrics {
+  offered: number;
+  completed: number;
+  completion_rate: number | null;
+  unfinished: number;
+  rejected: number;
+  admitted_unfinished: number;
+  suspended_final: number;
+  never_admitted: number;
+  throughput_per_second: number;
+  peak_backlog: number;
+  final_backlog: number;
+  timing_seconds: Record<
+    "waiting" | "first_service" | "response" | "execution",
+    {
+      count: number;
+      mean: number | null;
+      median: number | null;
+      p95: number | null;
+    }
+  >;
+  response_distribution: { edges: number[]; counts: number[] };
+  timeline: {
+    elapsed_seconds: number;
+    backlog: number;
+    throughput_per_second: number;
+  }[];
+}
+
+export interface ExtendedSplit {
+  cpu: SplitComparison;
+  memory: SplitComparison;
+  offered_tasks: number;
+  offered_tasks_sha256: string;
+  policies: Record<
+    string,
+    {
+      jointly_feasible: boolean;
+      validation_joint_violation_rate: number | null;
+      test_joint_violation_rate: number | null;
+      tasks: TaskMetrics | null;
+    }
+  >;
+}
+
+export interface ExtendedResponse {
+  mode: "extended-v1";
+  run_id?: string;
+  saved?: boolean;
+  execution_time_seconds: number;
+  parameters: SimulationResponse["parameters"];
+  time_split: ExtendedSplit;
+  service_split: ExtendedSplit;
+}
+
+export type ExperimentResult = SimulationResponse | ExtendedResponse;
+
 export interface SavedRun {
   id: string;
   created_at: string;
@@ -93,9 +155,10 @@ export interface SavedRun {
     n_steps?: number;
     target_violation?: number;
     seed?: number;
+    mode?: ExperimentMode;
   };
   status: "ok" | "error";
-  result: SimulationResponse | null;
+  result: ExperimentResult | null;
   duration_ms: number | null;
   error: string | null;
 }

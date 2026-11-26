@@ -55,7 +55,7 @@ function RunRow({
   onToggle: () => void;
   onDelete: (run: SavedRun) => void;
 }) {
-  const { n_services, n_steps, target_violation, seed } = run.params;
+  const { n_services, n_steps, target_violation, seed, mode } = run.params;
   const SourceIcon = run.source === "csv" ? FileSpreadsheet : Workflow;
   const date = new Date(run.created_at);
   const summary = [
@@ -83,7 +83,13 @@ function RunRow({
             </span>
             <span>
               <strong>
-                {run.source === "csv" ? "CSV workload" : "Synthetic workload"}
+                {mode === "extended-v1"
+                  ? run.source === "csv"
+                    ? "Extended CSV workload"
+                    : "Extended synthetic workload"
+                  : run.source === "csv"
+                    ? "CSV workload"
+                    : "Synthetic workload"}
               </strong>
               <span className="history-run-id">
                 {run.id.slice(0, 8)}

@@ -7,6 +7,8 @@ import {
   X,
 } from "lucide-react";
 import { useRef, useState, type DragEvent, type FormEvent } from "react";
+import { ExperimentModeField } from "../components/ExperimentModeField";
+import type { ExperimentMode } from "../types/api";
 import { runSimulationCsv } from "../api/client";
 import { NumberField, RunActions } from "../components/ExperimentControls";
 import { SimulationResultView } from "../components/SimulationResultView";
@@ -28,6 +30,8 @@ api,2026-01-01T00:05Z,0.38`;
 export function UploadPage() {
   const { limits, usingFallback } = useLimits();
   const experiment = useExperiment();
+  const [mode, setMode] = useState<ExperimentMode>("cpu-only");
+  const extended = mode === "extended-v1";
   const [file, setFile] = useState<File | null>(null);
   const [target, setTarget] = useState("0.01");
   const [dragging, setDragging] = useState(false);
@@ -75,7 +79,7 @@ export function UploadPage() {
     }
     setFraction(null);
     void experiment.execute((signal) =>
-      runSimulationCsv(file, rate, signal, setFraction),
+      runSimulationCsv(file, rate, signal, setFraction, mode),
     );
   }
 
@@ -97,6 +101,14 @@ export function UploadPage() {
           </header>
           <fieldset className="exp-section" disabled={experiment.loading}>
             <legend className="sr-only">CSV workload configuration</legend>
+            <ExperimentModeField
+              mode={mode}
+              limits={limits}
+              onChange={(next) => {
+                setMode(next);
+                experiment.setError("");
+              }}
+            />
             <input
               ref={fileInput}
               type="file"
@@ -229,28 +241,51 @@ export function UploadPage() {
               </div>
             </dl>
             <pre className="exp-code">
-              <code>{example}</code>
+              <code>
+                {extended
+                  ? "service_id,timestamp,cpu_demand,memory_demand_gib\napi,0,0.42,2.1\napi,1,0.38,2.3"
+                  : example}
+              </code>
             </pre>
             <h3>Trace requirements</h3>
-            <p>
-              <a href="/sample-workload.csv" download>
-                Download sample workload CSV
-              </a>{" "}
-              · 4 services, 600 intervals
-            </p>
+            {extended && (
+              <p>
+                Include memory_demand_gib and use the same consecutive
+                five-minute grid for every service.
+              </p>
+            )}
+            {!extended && (
+              <p>
+                <a href="/sample-workload.csv" download>
+                  Download sample workload CSV
+                </a>{" "}
+                · 4 services, 600 intervals
+              </p>
+            )}
             <ul className="exp-requirements">
               <li>
-                {MIN_SERVICES}–{limits.max_services} services per workload
+                {MIN_SERVICES}–
+                {extended ? limits.extended_max_services : limits.max_services}{" "}
+                services per workload
               </li>
               <li>
-                {MIN_STEPS}–{limits.max_steps.toLocaleString()} steps in the
-                shortest trace
+                {MIN_STEPS}–
+                {(extended
+                  ? limits.extended_max_steps
+                  : limits.max_steps
+                )?.toLocaleString()}{" "}
+                steps in the
+                {extended ? "shared grid" : "shortest trace"}
               </li>
-              <li>Longer traces are trimmed to the shortest service trace.</li>
+              {!extended && (
+                <li>
+                  Longer traces are trimmed to the shortest service trace.
+                </li>
+              )}
               <li>
-                Use unique, evenly spaced timestamps per service. The parser
-                sorts timestamps as text and aligns services by row position.
-                Zero-pad numeric steps.
+                {extended
+                  ? "Use consecutive integer interval indices or five-minute ISO-8601 timestamps with offsets."
+                  : "Use unique, evenly spaced timestamps per service. The parser sorts timestamps as text and aligns services by row position. Zero-pad numeric steps."}
               </li>
             </ul>
             {usingFallback && (

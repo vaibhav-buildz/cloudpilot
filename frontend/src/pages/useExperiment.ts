@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiError, getLimits } from "../api/client";
-import type { LimitsResponse, SimulationResponse } from "../types/api";
+import type { ExperimentResult, LimitsResponse } from "../types/api";
 
 export const MIN_SERVICES = 3;
 export const MIN_STEPS = 482;
@@ -42,7 +42,7 @@ export function useExperiment() {
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState("");
-  const [result, setResult] = useState<SimulationResponse | null>(null);
+  const [result, setResult] = useState<ExperimentResult | null>(null);
 
   useEffect(
     () => () => {
@@ -61,7 +61,7 @@ export function useExperiment() {
   }, [startedAt]);
 
   async function execute(
-    request: (signal: AbortSignal) => Promise<SimulationResponse>,
+    request: (signal: AbortSignal) => Promise<ExperimentResult>,
   ) {
     if (controller.current) return;
     const active = new AbortController();

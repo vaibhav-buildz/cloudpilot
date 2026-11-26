@@ -13,14 +13,17 @@ import type {
   HypothesisVerdict,
   MethodMetrics,
   SimulationResponse,
+  ExperimentResult,
 } from "../types/api";
 import { AllocationBarChart } from "./AllocationBarChart";
 import { HeldOutCharts, WorkloadDiagnostics } from "./ResearchDiagnostics";
-import { metricsCsv, predictionError } from "./experimentExport";
+import { downloadExperiment, predictionError } from "./experimentExport";
 import "../pages/experiments.css";
 
+import { ExtendedResults } from "./ExtendedResults";
+
 interface Props {
-  result: SimulationResponse;
+  result: ExperimentResult;
   source?: string;
   persisted?: boolean;
 }
@@ -64,23 +67,6 @@ function EfficiencyFinding({
   );
 }
 
-function downloadResult(result: SimulationResponse, format: "json" | "csv") {
-  const blob = new Blob(
-    [format === "json" ? JSON.stringify(result, null, 2) : metricsCsv(result)],
-    {
-      type: format === "json" ? "application/json" : "text/csv;charset=utf-8",
-    },
-  );
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = `cloudpilot-${result.run_id ?? "experiment"}.${format}`;
-  document.body.append(anchor);
-  anchor.click();
-  anchor.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 0);
-}
-
 const columns = {
   name: "Policy",
   is_feasible: "Validation",
@@ -104,7 +90,19 @@ function metricValue(name: string, method: MethodMetrics, key: Column) {
   return method[key] ?? undefined;
 }
 
-export function SimulationResultView({ result, source, persisted }: Props) {
+export function SimulationResultView(props: Props) {
+  return props.result.mode === "extended-v1" ? (
+    <ExtendedResults result={props.result} persisted={props.persisted} />
+  ) : (
+    <CpuResults {...props} result={props.result} />
+  );
+}
+
+function CpuResults({
+  result,
+  source,
+  persisted,
+}: Omit<Props, "result"> & { result: SimulationResponse }) {
   const [split, setSplit] = useState<"TIME" | "SERVICE">("TIME");
   const [sort, setSort] = useState<{ key: Column; descending: boolean }>();
   const heading = useRef<HTMLHeadingElement>(null);
@@ -116,7 +114,7 @@ export function SimulationResultView({ result, source, persisted }: Props) {
     <button
       type="button"
       className="btn btn-secondary"
-      onClick={() => downloadResult(result, "json")}
+      onClick={() => downloadExperiment(result, "json")}
     >
       <Download size={15} aria-hidden="true" />
       Export JSON
@@ -193,7 +191,7 @@ export function SimulationResultView({ result, source, persisted }: Props) {
           <button
             type="button"
             className="btn btn-secondary"
-            onClick={() => downloadResult(result, "csv")}
+            onClick={() => downloadExperiment(result, "csv")}
           >
             <Download size={15} aria-hidden="true" />
             Export metrics CSV

@@ -1,7 +1,8 @@
 import {
   LimitsResponse,
   SavedRun,
-  SimulationResponse,
+  ExperimentMode,
+  ExperimentResult,
 } from "../types/api";
 
 export class ApiError extends Error {
@@ -22,7 +23,10 @@ async function handleResponse<T>(res: Response): Promise<T> {
     try {
       const body = await res.json();
       if (Array.isArray(body.detail)) {
-        detail = body.detail.map((issue: { msg?: string }) => issue.msg).filter(Boolean).join(". ");
+        detail = body.detail
+          .map((issue: { msg?: string }) => issue.msg)
+          .filter(Boolean)
+          .join(". ");
       } else {
         detail = body.detail || body.message || "";
       }
@@ -33,18 +37,20 @@ async function handleResponse<T>(res: Response): Promise<T> {
     if (res.status === 401) {
       throw new ApiError(
         detail || "Proxy key missing or authentication failed.",
-        401
+        401,
       );
     }
     if (res.status === 422) {
       throw new ApiError(
         detail || "Invalid input parameters. Please check your inputs.",
-        422
+        422,
       );
     }
     if (res.status === 429) {
       const retryAfterHeader = res.headers.get("Retry-After");
-      const retryAfter = retryAfterHeader ? parseInt(retryAfterHeader, 10) : undefined;
+      const retryAfter = retryAfterHeader
+        ? parseInt(retryAfterHeader, 10)
+        : undefined;
       const msg = retryAfter
         ? `Rate limit exceeded. Try again in ${retryAfter}s.`
         : "Rate limit exceeded. Please wait a moment.";
@@ -53,19 +59,19 @@ async function handleResponse<T>(res: Response): Promise<T> {
     if (res.status === 504) {
       throw new ApiError(
         "Simulation timed out on backend. Try smaller workload settings.",
-        504
+        504,
       );
     }
     if (res.status === 502 || res.status === 503) {
       throw new ApiError(
         "Backend service unavailable. Please check that the server is running.",
-        res.status
+        res.status,
       );
     }
 
     throw new ApiError(
       detail || `Request failed with status ${res.status}`,
-      res.status
+      res.status,
     );
   }
 
@@ -90,9 +96,10 @@ export async function runSimulation(
     n_steps: number;
     seed: number;
     target_violation: number;
+    mode?: ExperimentMode;
   },
-  signal?: AbortSignal
-): Promise<SimulationResponse> {
+  signal?: AbortSignal,
+): Promise<ExperimentResult> {
   try {
     const res = await fetch("/api/simulate", {
       method: "POST",
@@ -103,7 +110,7 @@ export async function runSimulation(
       body: JSON.stringify(payload),
       signal,
     });
-    return await handleResponse<SimulationResponse>(res);
+    return await handleResponse<ExperimentResult>(res);
   } catch (err: unknown) {
     if (err instanceof ApiError) throw err;
     if (err instanceof DOMException && err.name === "AbortError") {
@@ -117,12 +124,19 @@ export function runSimulationCsv(
   file: File,
   targetViolation: number,
   signal?: AbortSignal,
-  onProgress?: (fraction: number) => void
-): Promise<SimulationResponse> {
+  onProgress?: (fraction: number) => void,
+  mode: ExperimentMode = "cpu-only",
+): Promise<ExperimentResult> {
   // Fetch does not expose upload byte counts. XHR uses the same same-origin proxy
   // and browser-managed cookie as the other experiment calls.
   return new Promise((resolve, reject) => {
-    const cancelled = () => reject(new ApiError("Request cancelled. The server may still finish this run.", 499));
+    const cancelled = () =>
+      reject(
+        new ApiError(
+          "Request cancelled. The server may still finish this run.",
+          499,
+        ),
+      );
     if (signal?.aborted) {
       cancelled();
       return;
@@ -133,9 +147,11 @@ export function runSimulationCsv(
     request.onloadend = () => signal?.removeEventListener("abort", abort);
     request.onabort = cancelled;
     request.onerror = () => reject(new ApiError("Backend unavailable", 0));
-    request.ontimeout = () => reject(new ApiError("Upload request timed out.", 504));
+    request.ontimeout = () =>
+      reject(new ApiError("Upload request timed out.", 504));
     request.upload.onprogress = (event) => {
-      if (event.lengthComputable && event.total > 0) onProgress?.(event.loaded / event.total);
+      if (event.lengthComputable && event.total > 0)
+        onProgress?.(event.loaded / event.total);
     };
     request.upload.onload = () => onProgress?.(1);
     request.onload = () => {
@@ -144,7 +160,7 @@ export function runSimulationCsv(
         status: request.status,
         headers: retryAfter ? { "Retry-After": retryAfter } : {},
       });
-      handleResponse<SimulationResponse>(response).then(resolve, reject);
+      handleResponse<ExperimentResult>(response).then(resolve, reject);
     };
 
     request.open("POST", "/api/simulate/csv");
@@ -152,13 +168,14 @@ export function runSimulationCsv(
     const formData = new FormData();
     formData.append("file", file);
     formData.append("target_violation", targetViolation.toString());
+    if (mode === "extended-v1") formData.append("mode", mode);
     request.send(formData);
   });
 }
 
 export async function getRuns(
   limit: number = 10,
-  offset: number = 0
+  offset: number = 0,
 ): Promise<SavedRun[]> {
   try {
     const res = await fetch(`/api/runs?limit=${limit}&offset=${offset}`, {

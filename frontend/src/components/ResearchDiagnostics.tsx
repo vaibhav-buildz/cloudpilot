@@ -11,14 +11,18 @@ type Series = { label: string; values: number[] };
 const number = (value: number) =>
   value.toLocaleString(undefined, { maximumFractionDigits: 4 });
 
-function TraceChart({
+export function TraceChart({
   title,
   steps,
   series,
+  unit = "CPU cores",
+  stepLabel = "Step",
 }: {
   title: string;
   steps: number[];
   series: Series[];
+  unit?: string;
+  stepLabel?: string;
 }) {
   const [position, setPosition] = useState(0);
   const selected = Math.min(position, steps.length - 1);
@@ -32,7 +36,9 @@ function TraceChart({
   const y = (value: number) => 145 - (126 * (value - min)) / (max - min);
   return (
     <figure className="diag-chart">
-      <figcaption>{title} · CPU cores</figcaption>
+      <figcaption>
+        {title} · {unit}
+      </figcaption>
       <svg viewBox="0 0 600 174" aria-hidden="true">
         {[0, 0.25, 0.5, 0.75, 1].map((fraction) => {
           const value = min + fraction * (max - min);
@@ -67,25 +73,27 @@ function TraceChart({
           y2="145"
         />
         <text x="55" y="166">
-          Step {steps[0]}
+          {stepLabel} {steps[0]}
         </text>
         <text x="580" y="166" textAnchor="end">
-          Step {steps.at(-1)}
+          {stepLabel} {steps.at(-1)}
         </text>
       </svg>
       <label>
-        Inspect step{" "}
+        Inspect {stepLabel.toLowerCase()}{" "}
         <input
           type="range"
           min={0}
           max={steps.length - 1}
           value={selected}
           onChange={(event) => setPosition(Number(event.target.value))}
-          aria-valuetext={"Step " + steps[selected]}
+          aria-valuetext={`${stepLabel} ${steps[selected]}`}
         />
       </label>
       <ul>
-        <li>Step {steps[selected]}</li>
+        <li>
+          {stepLabel} {steps[selected]}
+        </li>
         {series.map((line, index) => (
           <li key={line.label} data-series={index}>
             {line.label} <strong>{number(line.values[selected])}</strong>
@@ -96,7 +104,13 @@ function TraceChart({
   );
 }
 
-export function HeldOutCharts({ traces }: { traces: HeldOutTrace[] }) {
+export function HeldOutCharts({
+  traces,
+  unit = "CPU cores",
+}: {
+  traces: HeldOutTrace[];
+  unit?: string;
+}) {
   const [service, setService] = useState(0);
   const [method, setMethod] = useState("GBR_q95");
   const trace = traces[service];
@@ -138,6 +152,7 @@ export function HeldOutCharts({ traces }: { traces: HeldOutTrace[] }) {
       </div>
       <TraceChart
         title="Actual vs. raw prediction"
+        unit={unit}
         steps={trace.steps}
         series={[
           { label: "Actual demand", values: trace.actual },
@@ -149,6 +164,7 @@ export function HeldOutCharts({ traces }: { traces: HeldOutTrace[] }) {
       {!predictions && <p>Static reservation has no prediction series.</p>}
       <TraceChart
         title="Demand vs. evaluated allocation"
+        unit={unit}
         steps={trace.steps}
         series={[
           { label: "Actual demand", values: trace.actual },

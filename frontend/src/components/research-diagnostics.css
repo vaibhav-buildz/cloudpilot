@@ -93,3 +93,29 @@
   flex-wrap: wrap;
   gap: 0.5rem;
 }
+
+.diag-mode {
+  display: grid;
+  gap: 0.3rem;
+  margin-bottom: 1rem;
+}
+.diag-mode select {
+  width: 100%;
+  padding: 0.55rem;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--strong-border);
+  border-radius: 4px;
+}
+.extended-stats {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+.extended-stats dt {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+.extended-stats dd {
+  font: 0.9rem var(--font-mono);
+}
