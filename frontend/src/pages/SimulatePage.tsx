@@ -4,6 +4,9 @@ import { LimitsResponse, SimulationResponse } from "../types/api";
 import { DisclaimerBanner } from "../components/DisclaimerBanner";
 import { SimulationResultView } from "../components/SimulationResultView";
 
+const MIN_SERVICES = 3;
+const MIN_STEPS = 482;
+
 export const SimulatePage: React.FC = () => {
   const [limits, setLimits] = useState<LimitsResponse>({
     max_services: 50,
@@ -14,7 +17,7 @@ export const SimulatePage: React.FC = () => {
   });
 
   const [nServices, setNServices] = useState(20);
-  const [nSteps, setNSteps] = useState(288);
+  const [nSteps, setNSteps] = useState(600);
   const [seed, setSeed] = useState(42);
   const [targetViolation, setTargetViolation] = useState(0.01);
 
@@ -41,11 +44,11 @@ export const SimulatePage: React.FC = () => {
   };
 
   const validate = (): string | null => {
-    if (nServices < 1 || nServices > limits.max_services) {
-      return `Services count must be between 1 and ${limits.max_services}.`;
+    if (nServices < MIN_SERVICES || nServices > limits.max_services) {
+      return `Services count must be between ${MIN_SERVICES} and ${limits.max_services}.`;
     }
-    if (nSteps < 48 || nSteps > limits.max_steps) {
-      return `Steps count must be between 48 and ${limits.max_steps}.`;
+    if (nSteps < MIN_STEPS || nSteps > limits.max_steps) {
+      return `Steps count must be between ${MIN_STEPS} and ${limits.max_steps}.`;
     }
     if (seed < 0 || !Number.isInteger(seed)) {
       return "Seed must be a non-negative integer.";
@@ -145,10 +148,10 @@ export const SimulatePage: React.FC = () => {
           <button
             type="button"
             className="btn btn-secondary"
-            onClick={() => handlePreset(5, 288)}
+            onClick={() => handlePreset(5, 600)}
             disabled={isLoading}
           >
-            Small (5 svc, 1 day)
+            Small (5 svc, 600 steps)
           </button>
           <button
             type="button"
@@ -170,7 +173,7 @@ export const SimulatePage: React.FC = () => {
                 id="n-services"
                 type="number"
                 className="form-input"
-                min={1}
+                min={MIN_SERVICES}
                 max={limits.max_services}
                 value={nServices}
                 onChange={(e) => setNServices(parseInt(e.target.value, 10) || 0)}
@@ -188,14 +191,14 @@ export const SimulatePage: React.FC = () => {
                 id="n-steps"
                 type="number"
                 className="form-input"
-                min={48}
+                min={MIN_STEPS}
                 max={limits.max_steps}
                 value={nSteps}
                 onChange={(e) => setNSteps(parseInt(e.target.value, 10) || 0)}
                 disabled={isLoading}
                 required
               />
-              <div className="form-help">288 steps = 24 hours, 864 steps = 3 days</div>
+              <div className="form-help">At least {MIN_STEPS} steps, including 288 for feature history</div>
             </div>
 
             <div className="form-group">

@@ -161,7 +161,8 @@ svc_1,2026-01-01T00:00:00Z,0.42
 svc_1,2026-01-01T00:05:00Z,0.38`}
           </pre>
           <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
-            Maximum file size: {(limits.max_csv_bytes / (1024 * 1024)).toFixed(1)} MB.
+            At least 3 services and 482 steps per service. Maximum file size:{" "}
+            {(limits.max_csv_bytes / (1024 * 1024)).toFixed(1)} MB.
           </p>
         </div>
 

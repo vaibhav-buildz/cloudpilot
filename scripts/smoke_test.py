@@ -2,10 +2,31 @@
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import sys
+import uuid
 
 import httpx
+
+_CREDENTIAL_FIELD = re.compile(
+    r"(?i)([\"']?[\w-]*(?:key|token|secret|password|authorization|cookie)[\"']?\s*[:=]\s*)"
+    r'(?:"(?:\\.|[^"\\])*"|\'[^\']*\'|(?:Bearer\s+)?[^\s,;}\]]+)'
+)
+_CREDENTIAL_VALUE = re.compile(r"(?:sb_secret_[\w-]+|rnd_[\w-]+|eyJ[\w-]+\.[\w-]+\.[\w-]+)")
+
+
+def _response_detail(response: httpx.Response, *secrets: str) -> str:
+    """Return a bounded diagnostic without known credentials or multiline output."""
+    body = response.text
+    for secret in sorted(filter(None, secrets), key=len, reverse=True):
+        body = body.replace(secret, "[REDACTED]")
+        body = body.replace(json.dumps(secret, ensure_ascii=False)[1:-1], "[REDACTED]")
+    body = _CREDENTIAL_FIELD.sub(r"\1[REDACTED]", body)
+    body = _CREDENTIAL_VALUE.sub("[REDACTED]", body)
+    body = " ".join(body.split())
+    return f"HTTP {response.status_code}" + (f" body={body[:500]!r}" if body else "")
 
 
 def _require_env(name: str) -> str:
@@ -21,8 +42,18 @@ def main() -> int:
     frontend_url = _require_env("FRONTEND_URL").rstrip("/")
     api_key = _require_env("CLOUDPILOT_API_KEY")
     allowed_origin = os.environ.get("ALLOWED_ORIGIN", frontend_url).strip().rstrip("/")
+    direct_headers = {"X-API-Key": api_key, "X-Visitor-Id": str(uuid.uuid4())}
+    secrets = (
+        api_key,
+        direct_headers["X-Visitor-Id"],
+        os.environ.get("SUPABASE_SERVICE_KEY", ""),
+    )
+    workload = {"n_services": 4, "n_steps": 600, "seed": 42, "target_violation": 0.01}
 
     failures = 0
+
+    def describe(response: httpx.Response, ok: bool = False) -> str:
+        return f"HTTP {response.status_code}" if ok else _response_detail(response, *secrets)
 
     def report(name: str, ok: bool, detail: str = "") -> None:
         nonlocal failures
@@ -36,23 +67,22 @@ def main() -> int:
         # (a) GET /health 200
         try:
             r = client.get(f"{backend_url}/health")
-            report("health", r.status_code == 200, f"HTTP {r.status_code}")
+            report("health", r.status_code == 200, describe(r, r.status_code == 200))
         except Exception as exc:
             report("health", False, type(exc).__name__)
 
         # (b) GET /ready 200
         try:
             r = client.get(f"{backend_url}/ready")
-            report("ready", r.status_code == 200, f"HTTP {r.status_code}")
+            report("ready", r.status_code == 200, describe(r, r.status_code == 200))
         except Exception as exc:
             report("ready", False, type(exc).__name__)
 
         # (c) Unauthenticated request to protected endpoint is rejected (401/403)
         try:
             r = client.get(f"{backend_url}/api/limits")
-            report(
-                "auth_required", r.status_code in (401, 403), f"HTTP {r.status_code}"
-            )
+            auth_ok = r.status_code in (401, 403)
+            report("auth_required", auth_ok, describe(r, auth_ok))
         except Exception as exc:
             report("auth_required", False, type(exc).__name__)
 
@@ -61,49 +91,42 @@ def main() -> int:
             sim_res = client.post(
                 f"{frontend_url}/api/simulate",
                 headers={"Origin": frontend_url, "Content-Type": "application/json"},
-                json={
-                    "n_services": 4,
-                    "n_steps": 120,
-                    "seed": 42,
-                    "target_violation": 0.01,
-                },
+                json=workload,
             )
             if sim_res.status_code != 200:
                 report(
                     "proxy_simulate_and_readback",
                     False,
-                    f"POST HTTP {sim_res.status_code}",
+                    f"POST {describe(sim_res)}",
                 )
             else:
                 body = sim_res.json()
                 run_id = body.get("run_id")
                 saved = body.get("saved")
-                if not saved or not run_id:
+                if saved is not True or not run_id:
                     report(
                         "proxy_simulate_and_readback",
                         False,
-                        f"saved={saved}, run_id_present={bool(run_id)}",
+                        f"saved={saved is True}, run_id_present={bool(run_id)}",
                     )
                 else:
-                    read_res = client.get(
-                        f"{frontend_url}/api/runs/{run_id}",
-                        cookies=sim_res.cookies,
-                    )
-                    read_ok = (
-                        read_res.status_code == 200
-                        and read_res.json().get("id") == run_id
-                    )
+                    read_res = client.get(f"{frontend_url}/api/runs/{run_id}")
+                    read_ok = read_res.status_code == 200 and read_res.json().get("id") == run_id
                     report(
                         "proxy_simulate_and_readback",
                         read_ok,
-                        f"POST 200, GET HTTP {read_res.status_code}",
+                        f"POST 200, GET {describe(read_res, read_ok)}",
                     )
                     # Best-effort cleanup of smoke-test row
-                    client.delete(
-                        f"{frontend_url}/api/runs/{run_id}",
-                        headers={"Origin": frontend_url},
-                        cookies=sim_res.cookies,
-                    )
+                    try:
+                        cleanup = client.delete(
+                            f"{frontend_url}/api/runs/{run_id}",
+                            headers={"Origin": frontend_url},
+                        )
+                        if cleanup.status_code != 200:
+                            print(f"WARN smoke-test cleanup: {describe(cleanup)}")
+                    except httpx.RequestError as exc:
+                        print(f"WARN smoke-test cleanup: {type(exc).__name__}")
         except Exception as exc:
             report("proxy_simulate_and_readback", False, type(exc).__name__)
 
@@ -128,12 +151,13 @@ def main() -> int:
             cors_ok = (
                 good.status_code == 200
                 and good_acao == allowed_origin
+                and evil.status_code == 400
                 and evil_acao != "https://evil.example"
             )
             report(
                 "cors_preflight",
                 cors_ok,
-                f"allowed HTTP {good.status_code}, evil HTTP {evil.status_code}",
+                f"allowed {describe(good, cors_ok)}, evil {describe(evil, cors_ok)}",
             )
         except Exception as exc:
             report("cors_preflight", False, type(exc).__name__)
@@ -142,27 +166,21 @@ def main() -> int:
         try:
             limits_res = client.get(
                 f"{backend_url}/api/limits",
-                headers={"X-API-Key": api_key},
+                headers=direct_headers,
             )
-            max_services = 20
-            if limits_res.status_code == 200:
-                max_services = int(limits_res.json().get("max_services", 20))
-
-            over_res = client.post(
-                f"{backend_url}/api/simulate",
-                headers={"X-API-Key": api_key, "Content-Type": "application/json"},
-                json={
-                    "n_services": max_services + 100,
-                    "n_steps": 120,
-                    "seed": 42,
-                    "target_violation": 0.01,
-                },
-            )
-            report(
-                "simulation_caps",
-                over_res.status_code == 422,
-                f"HTTP {over_res.status_code}",
-            )
+            if limits_res.status_code != 200:
+                report("simulation_caps", False, f"GET limits {describe(limits_res)}")
+            else:
+                max_services = int(limits_res.json()["max_services"])
+                over_res = client.post(
+                    f"{backend_url}/api/simulate",
+                    headers=direct_headers,
+                    json={**workload, "n_services": max_services + 100},
+                )
+                caps_ok = over_res.status_code == 422 and "SIM_MAX_SERVICES" in str(
+                    over_res.json().get("detail")
+                )
+                report("simulation_caps", caps_ok, f"POST {describe(over_res, caps_ok)}")
         except Exception as exc:
             report("simulation_caps", False, type(exc).__name__)
 

@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import {
   isPathSafe,
@@ -13,6 +14,20 @@ import {
   validateUpstreamUrl,
   verifySameOrigin,
 } from "../../api/_proxyHelper";
+
+it("resolves Vercel handler imports under native Node ESM rules", () => {
+  const program = ts.createProgram([path.resolve("api/[...path].ts")], {
+    module: ts.ModuleKind.NodeNext,
+    target: ts.ScriptTarget.ES2022,
+    strict: true,
+    noEmit: true,
+    skipLibCheck: true,
+  });
+  const diagnostics = ts.getPreEmitDiagnostics(program).map((diagnostic) =>
+    ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n")
+  );
+  expect(diagnostics).toEqual([]);
+});
 
 describe("Proxy Helper: Route Allowlist", () => {
   it("allows permitted GET routes", () => {

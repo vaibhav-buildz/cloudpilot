@@ -5,9 +5,11 @@ from __future__ import annotations
 import io
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Settings
+from app.engine.runner import run_experiment
 from app.main import create_app
 from app.routes.simulate import concurrency_gate
 from tests.conftest import TEST_VALID_KEY
@@ -73,7 +75,7 @@ def test_simulate_concurrent_request_returns_429():
     try:
         res = client.post(
             "/api/simulate",
-            json={"seed": 42, "n_services": 4, "n_steps": 400},
+            json={"seed": 42, "n_services": 4, "n_steps": 600},
             headers=headers,
         )
         assert res.status_code == 429
@@ -115,7 +117,7 @@ def test_simulate_returns_200_with_expected_keys(client: TestClient):
     mock_response = {
         "disclaimer": "Results describe synthetic workload data.",
         "execution_time_seconds": 1.25,
-        "parameters": {"seed": 42, "n_services": 4, "n_steps": 400},
+        "parameters": {"seed": 42, "n_services": 4, "n_steps": 600},
         "time_split": {"comparator": "static", "methods": {}, "h1": {"verdict": "SUPPORTED"}},
         "service_split": {"comparator": "static", "methods": {}, "h2": {"verdict": "SUPPORTED"}},
         "h3": {"verdict": "SUPPORTED", "threshold": 0.015},
@@ -124,7 +126,7 @@ def test_simulate_returns_200_with_expected_keys(client: TestClient):
     with patch("app.routes.simulate.run_experiment", return_value=mock_response):
         res = client.post(
             "/api/simulate",
-            json={"seed": 42, "n_services": 4, "n_steps": 400},
+            json={"seed": 42, "n_services": 4, "n_steps": 600},
             headers=headers,
         )
         assert res.status_code == 200
@@ -133,3 +135,67 @@ def test_simulate_returns_200_with_expected_keys(client: TestClient):
         assert "time_split" in data
         assert "service_split" in data
         assert "h3" in data
+
+
+@pytest.mark.parametrize(("field", "value"), [("n_steps", 481), ("n_services", 2), ("seed", -1)])
+def test_simulate_rejects_invalid_engine_inputs(client: TestClient, field: str, value: int):
+    with patch("app.routes.simulate.run_experiment") as runner:
+        res = client.post(
+            "/api/simulate",
+            json={"seed": 42, "n_services": 3, "n_steps": 482, field: value},
+            headers={"X-API-Key": TEST_VALID_KEY},
+        )
+    assert res.status_code == 422
+    assert res.json()["detail"][0]["loc"] == ["body", field]
+    runner.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("services", "steps", "demand", "message"),
+    [(3, 481, "1", "482 steps"), (2, 482, "1", "3 services"), (3, 482, "nan", "finite")],
+)
+def test_simulate_csv_rejects_invalid_engine_inputs(client, services, steps, demand, message):
+    rows = ["service_id,timestamp,cpu_demand"]
+    rows.extend(
+        f"svc-{service},{step:04},{demand}" for service in range(services) for step in range(steps)
+    )
+    with patch("app.routes.simulate.run_experiment") as runner:
+        res = client.post(
+            "/api/simulate/csv",
+            files={"file": ("workload.csv", "\n".join(rows), "text/csv")},
+            headers={"X-API-Key": TEST_VALID_KEY},
+        )
+    assert res.status_code == 422
+    assert message in res.json()["detail"]
+    runner.assert_not_called()
+
+
+def test_minimum_workload_completes_both_splits():
+    result = run_experiment(n_services=3, n_steps=482, n_estimators_override=2)
+    assert len(result["time_split"]["methods"]["GBR_q95"]["per_service_sum_a"]) == 3
+    assert len(result["service_split"]["methods"]["GBR_q95"]["per_service_sum_a"]) == 1
+
+
+@pytest.mark.parametrize(
+    ("query", "form", "expected"),
+    [("", {"target_violation": "0.02"}, 0.02), ("?target_violation=0.03", {}, 0.03)],
+)
+def test_csv_uses_requested_target_violation(client, query, form, expected):
+    rows = ["service_id,timestamp,cpu_demand"]
+    rows.extend(f"svc-{service},{step:04},1" for service in range(3) for step in range(482))
+    with patch("app.routes.simulate.run_experiment", return_value={}) as runner:
+        res = client.post(
+            f"/api/simulate/csv{query}",
+            data=form,
+            files={"file": ("workload.csv", "\n".join(rows), "text/csv")},
+            headers={"X-API-Key": TEST_VALID_KEY},
+        )
+    assert res.status_code == 200
+    assert runner.call_args.kwargs["target_violation"] == expected
+
+
+def test_simulation_internal_error_hides_exception_text(client):
+    with patch("app.routes.simulate.run_experiment", side_effect=RuntimeError("internal data")):
+        res = client.post("/api/simulate", json={}, headers={"X-API-Key": TEST_VALID_KEY})
+    assert res.status_code == 500
+    assert res.json() == {"detail": "Simulation failed"}

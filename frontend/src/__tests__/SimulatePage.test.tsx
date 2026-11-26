@@ -43,7 +43,7 @@ describe("SimulatePage", () => {
 
     // Click Small Preset
     const smallBtn = screen.getByRole("button", {
-      name: /Small \(5 svc, 1 day\)/i,
+      name: /Small \(5 svc, 600 steps\)/i,
     });
     fireEvent.click(smallBtn);
 
@@ -51,7 +51,7 @@ describe("SimulatePage", () => {
     const stepsInput = screen.getByLabelText(/Time Steps/i) as HTMLInputElement;
 
     expect(servicesInput.value).toBe("5");
-    expect(stepsInput.value).toBe("288");
+    expect(stepsInput.value).toBe("600");
 
     // Click Medium Preset
     const mediumBtn = screen.getByRole("button", {
@@ -78,8 +78,13 @@ describe("SimulatePage", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText(/Services count must be between 1 and/i)
+        screen.getByText(/Services count must be between 3 and/i)
       ).toBeInTheDocument();
     });
+
+    fireEvent.change(servicesInput, { target: { value: "3" } });
+    fireEvent.change(screen.getByLabelText(/Time Steps/i), { target: { value: "481" } });
+    fireEvent.click(submitBtn);
+    expect(screen.getByText(/Steps count must be between 482 and/i)).toBeInTheDocument();
   });
 });

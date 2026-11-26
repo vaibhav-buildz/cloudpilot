@@ -5,13 +5,14 @@ from __future__ import annotations
 import csv
 import io
 from collections import defaultdict
+from math import isfinite
 
 import numpy as np
 
+from app.engine.features import MIN_WORKLOAD_SERVICES, MIN_WORKLOAD_STEPS
 from app.engine.generator import WorkloadData
 
 MAX_CSV_BYTES = 5 * 1024 * 1024  # 5 MB upload limit
-MIN_REQUIRED_STEPS = 300  # Minimum time steps required for 288-step lag features
 
 
 def load_workload_from_csv(csv_bytes: bytes) -> WorkloadData:
@@ -76,6 +77,8 @@ def load_workload_from_csv(csv_bytes: bytes) -> WorkloadData:
                 f"Line {line_num}: invalid CPU demand '{raw_cpu}', expected float."
             ) from exc
 
+        if not isfinite(cpu_val):
+            raise ValueError(f"Line {line_num}: CPU demand must be finite.")
         if cpu_val < 0.0:
             raise ValueError(f"Line {line_num}: negative CPU demand {cpu_val} is prohibited.")
 
@@ -86,6 +89,8 @@ def load_workload_from_csv(csv_bytes: bytes) -> WorkloadData:
 
     service_ids = sorted(service_records.keys())
     n_services = len(service_ids)
+    if n_services < MIN_WORKLOAD_SERVICES:
+        raise ValueError(f"CSV must contain at least {MIN_WORKLOAD_SERVICES} services.")
 
     # Sort each service's records by timestamp
     for srv in service_ids:
@@ -95,10 +100,10 @@ def load_workload_from_csv(csv_bytes: bytes) -> WorkloadData:
     step_counts = [len(service_records[srv]) for srv in service_ids]
     min_steps = min(step_counts)
 
-    if min_steps < MIN_REQUIRED_STEPS:
+    if min_steps < MIN_WORKLOAD_STEPS:
         raise ValueError(
-            f"Service traces have {min_steps} steps. A minimum of {MIN_REQUIRED_STEPS} steps "
-            "(~25 hours at 5-minute intervals) is required for reliable feature computation."
+            f"Service traces have {min_steps} steps. A minimum of {MIN_WORKLOAD_STEPS} steps "
+            "per service is required for TIME split training after the feature warm-up."
         )
 
     # If traces have slight length variations, truncate all to the common minimum length

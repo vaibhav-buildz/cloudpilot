@@ -9,7 +9,7 @@ import {
   validateUpstreamUrl,
   verifySameOrigin,
   MAX_BODY_BYTES,
-} from "./_proxyHelper";
+} from "./_proxyHelper.js";
 
 async function readBodyBuffer(
   req: IncomingMessage

@@ -8,11 +8,22 @@ import threading
 import time
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    status,
+)
 from pydantic import BaseModel, Field
 
 from app.config import Settings, get_settings
 from app.engine.csv_loader import MAX_CSV_BYTES, load_workload_from_csv
+from app.engine.features import MIN_WORKLOAD_SERVICES, MIN_WORKLOAD_STEPS
 from app.engine.runner import run_experiment
 from app.ratelimit import global_sim_limiter, rate_limiter
 from app.security import verify_api_key
@@ -47,9 +58,13 @@ concurrency_gate = SimulationConcurrencyGate()
 class SimulateRequest(BaseModel):
     """Parameters for synthetic workload simulation."""
 
-    seed: int = Field(default=42, description="Random seed for reproducibility")
-    n_services: int = Field(default=8, ge=2, description="Number of services to simulate")
-    n_steps: int = Field(default=600, ge=388, description="Number of 5-minute time steps")
+    seed: int = Field(default=42, ge=0, description="Random seed for reproducibility")
+    n_services: int = Field(
+        default=8, ge=MIN_WORKLOAD_SERVICES, description="Number of services to simulate"
+    )
+    n_steps: int = Field(
+        default=600, ge=MIN_WORKLOAD_STEPS, description="Number of 5-minute time steps"
+    )
     target_violation: float = Field(
         default=0.01,
         ge=0.005,
@@ -215,9 +230,10 @@ async def simulate_workload(
             detail=f"Simulation timed out after {settings.SIM_TIMEOUT_SECONDS} seconds.",
         ) from exc
     except Exception as exc:
+        logger.error("Synthetic simulation failed (%s)", type(exc).__name__)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Simulation failed: {exc}",
+            detail="Simulation failed",
         ) from exc
     finally:
         concurrency_gate.release(gate_client_id)
@@ -230,8 +246,13 @@ async def simulate_csv_workload(
     settings: Annotated[Settings, Depends(get_settings)],
     client_id: Annotated[str, Depends(verify_api_key)],
     target_violation: float = Query(default=0.01, ge=0.005, le=0.05),
+    form_target_violation: Annotated[
+        float | None, Form(alias="target_violation", ge=0.005, le=0.05)
+    ] = None,
 ) -> dict[str, Any]:
     """Execute allocation experiment on user-uploaded workload CSV."""
+    if form_target_violation is not None:
+        target_violation = form_target_violation
     contents = await file.read()
     if len(contents) > MAX_CSV_BYTES:
         raise HTTPException(
@@ -328,9 +349,10 @@ async def simulate_csv_workload(
             detail=f"Simulation timed out after {settings.SIM_TIMEOUT_SECONDS} seconds.",
         ) from exc
     except Exception as exc:
+        logger.error("CSV simulation failed (%s)", type(exc).__name__)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Simulation failed: {exc}",
+            detail="Simulation failed",
         ) from exc
     finally:
         concurrency_gate.release(gate_client_id)

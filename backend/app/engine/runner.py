@@ -16,7 +16,13 @@ from app.engine.baselines import (
 )
 from app.engine.bootstrap import paired_bootstrap_test
 from app.engine.evaluate import EvaluationMetrics, compute_metrics
-from app.engine.features import MIN_HISTORY_REQUIRED, build_dataset
+from app.engine.features import (
+    MIN_HISTORY_REQUIRED,
+    MIN_WORKLOAD_SERVICES,
+    MIN_WORKLOAD_STEPS,
+    TIME_TRAIN_FRACTION,
+    build_dataset,
+)
 from app.engine.generator import WorkloadData, generate_workload
 from app.engine.margins import SelectedMargin, apply_margin, select_margin
 from app.engine.models import fit_model, get_model_instances
@@ -278,17 +284,18 @@ def run_experiment(
     static_requests = workload.static_requests
     total_services, total_steps = demand.shape
 
-    if total_steps < MIN_HISTORY_REQUIRED + 100:
+    if total_steps < MIN_WORKLOAD_STEPS:
         raise ValueError(
-            f"Workload steps ({total_steps}) too short. "
-            f"Must be at least {MIN_HISTORY_REQUIRED + 100}."
+            f"Workload steps ({total_steps}) too short. Must be at least {MIN_WORKLOAD_STEPS}."
         )
+    if total_services < MIN_WORKLOAD_SERVICES:
+        raise ValueError(f"Workload must contain at least {MIN_WORKLOAD_SERVICES} services.")
 
     # -------------------------------------------------------------
     # 1. TIME SPLIT: Train (60%), Validation (15%), Test (25%)
     # -------------------------------------------------------------
     _check_deadline(deadline, "TIME split")
-    train_end = int(0.60 * total_steps)
+    train_end = int(TIME_TRAIN_FRACTION * total_steps)
     val_end = int(0.75 * total_steps)
     test_end = total_steps
 
@@ -342,9 +349,6 @@ def run_experiment(
     train_srv = all_services[:n_train_srv]
     val_srv = all_services[n_train_srv : n_train_srv + n_val_srv]
     test_srv = all_services[n_train_srv + n_val_srv :]
-
-    if len(test_srv) == 0:
-        test_srv = all_services[-1:]
 
     service_split_res = run_split_pipeline(
         demand=demand,

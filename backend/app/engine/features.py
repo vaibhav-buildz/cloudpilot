@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+from math import ceil
+
 import numpy as np
 
 LAGS = [1, 2, 3, 6, 12, 288]
 ROLLING_WINDOWS = [12, 48]
 MIN_HISTORY_REQUIRED = 288
+TIME_TRAIN_FRACTION = 0.60
+# TIME training must include at least one target after the feature warm-up.
+MIN_WORKLOAD_STEPS = ceil((MIN_HISTORY_REQUIRED + 1) / TIME_TRAIN_FRACTION)
+MIN_WORKLOAD_SERVICES = 3  # One service per disjoint SERVICE partition.
 STEPS_PER_DAY = 288
 
 FEATURE_NAMES = [
