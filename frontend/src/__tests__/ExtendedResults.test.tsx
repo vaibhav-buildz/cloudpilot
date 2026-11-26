@@ -22,6 +22,14 @@ const tasks: TaskMetrics = {
   suspended_final: 1,
   never_admitted: 0,
   throughput_per_second: 1 / 300,
+  scheduler_utilization: {
+    cpu_core_seconds: 30,
+    cpu_capacity_core_seconds: 300,
+    cpu_fraction: 0.1,
+    memory_gib_seconds: 60,
+    memory_capacity_gib_seconds: 300,
+    memory_fraction: 0.2,
+  },
   peak_backlog: 1,
   final_backlog: 1,
   timing_seconds: {
@@ -122,6 +130,10 @@ describe("extended experiments", () => {
       </MemoryRouter>,
     );
     expect(screen.getByText(/saved to history/i)).toBeInTheDocument();
+    expect(screen.getByText(/Resident task memory 20%/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole("columnheader", { name: "Demand / capacity" }),
+    ).toBeInTheDocument();
     expect(
       screen.getByText(/queue and suspension backlog/i),
     ).toBeInTheDocument();

@@ -11,7 +11,7 @@ from app.engine.extended import (
     synthetic_memory,
 )
 from app.engine.generator import generate_workload
-from app.engine.task_scheduler import Task, run_service, task_metrics
+from app.engine.task_scheduler import IntervalUsage, Task, run_service, task_metrics
 from app.ratelimit import global_sim_limiter
 
 
@@ -67,6 +67,61 @@ def test_queue_rejections_and_bad_arrivals():
     assert task_metrics(states, backlog, 10)["unfinished"] == 2
     with pytest.raises(ValueError, match="grid-aligned"):
         run_service([Task("x", 0, 1, 1, 1)], np.array([1]), np.array([1]), 10)
+
+
+def test_resource_accounting_across_memory_suspension_and_zero_cpu():
+    tasks = [Task("a", 0, 0, 16, 2), Task("b", 0, 0, 12, 1)]
+    cpu = np.array([2, 2, 0, 2])
+    memory = np.array([3, 1, 2, 2])
+    usage: list[IntervalUsage] = []
+    states, backlog = run_service(tasks, cpu, memory, 10, usage=usage)
+    assert usage == [
+        IntervalUsage(20, 30),
+        IntervalUsage(2, 1),
+        IntervalUsage(0, 20),
+        IntervalUsage(6, 6),
+    ]
+    assert [s.completion for s in states] == [33, 11]
+    assert backlog == [0, 1, 0, 0]
+    for interval, cpu_cap, memory_cap in zip(usage, cpu, memory, strict=True):
+        assert 0 <= interval.cpu_core_seconds <= cpu_cap * 10
+        assert 0 <= interval.memory_gib_seconds <= memory_cap * 10
+    assert sum(row.cpu_core_seconds for row in usage) == sum(t.cpu_core_seconds for t in tasks)
+
+
+def test_work_remaining_below_old_absolute_tolerance_is_not_completed_early():
+    tasks = [Task("a", 0, 0, 1.0000000005, 1)]
+    states, _ = run_service(tasks, np.array([1, 0]), np.array([1, 1]), 1)
+    assert states[0].completion is None
+    assert 0 < states[0].remaining < 1e-9
+
+
+@pytest.mark.parametrize(
+    ("split", "service", "start"), [("time_split", 0, 450), ("service_split", 3, 288)]
+)
+def test_held_out_mutation_leaves_validation_selection_unchanged(split, service, start):
+    cpu = generate_workload(42, 4, 600).demand
+    memory = synthetic_memory(cpu, 42)
+    changed_cpu, changed_memory = cpu.copy(), memory.copy()
+    changed_cpu[service, start:] *= 10
+    changed_memory[service, start:] *= 10
+    observed = [
+        run_extended(workload=workload, n_estimators_override=2, diagnostics=False)[split]
+        for workload in ((cpu, memory), (changed_cpu, changed_memory))
+    ]
+    baseline, changed = observed
+    assert baseline["offered_tasks_sha256"] != changed["offered_tasks_sha256"]
+    for resource in ("cpu", "memory"):
+        assert baseline[resource]["comparator"] == changed[resource]["comparator"]
+        for name, metrics in baseline[resource]["methods"].items():
+            for field in ("margin_type", "margin_value", "is_feasible"):
+                assert metrics[field] == changed[resource]["methods"][name][field]
+    for name, policy in baseline["policies"].items():
+        assert policy["jointly_feasible"] == changed["policies"][name]["jointly_feasible"]
+        assert (
+            policy["validation_joint_violation_rate"]
+            == changed["policies"][name]["validation_joint_violation_rate"]
+        )
 
 
 def csv_data(edit=None):

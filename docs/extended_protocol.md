@@ -20,7 +20,7 @@ From the repository root, install the backend requirements and run:
 
     python scripts/run_extended_study.py --output-dir results/extended-pilot
 
-Use --csv PATH for a single uploaded workload and --full for the ten-seed configuration. Choose a new output directory: the runner protects existing results from overwrite. Numeric CSV timestamps are zero-based or offset integer interval indices. ISO-8601 timestamps must have a UTC offset. Every service must cover the same grid. Extended inputs are capped at 200 services, 4,032 intervals, and 65,536 cores or GiB per observation. No uploaded identifiers or CSV bytes are stored in results.
+Use --csv PATH for a single uploaded workload and --full for the ten-seed configuration. Choose a new output directory for a fresh run. Use --full --resume to continue from validated per-seed checkpoints. Numeric CSV timestamps are zero-based or offset integer interval indices. ISO-8601 timestamps must have a UTC offset. Every service must cover the same grid. Extended inputs are capped at 200 services, 4,032 intervals, and 65,536 cores or GiB per observation. No uploaded identifiers or CSV bytes are stored in results.
 
 For local web execution, set ENABLE_EXTENDED_SIMULATION=true in the backend process with APP_ENV=development, and use the existing local frontend proxy. The development UI caps extended jobs at four services and 600 intervals, or lower configured limits. Production denies extended execution even with the flag set. Time budgets are cooperative between engine stages, so an individual offline estimator fit may finish after its deadline. Latency and utilization describe this simulator only. Workloads omit network delay, disk I/O, eviction overhead, and cross-service resource borrowing.
 

@@ -101,6 +101,12 @@ export function extendedMetricsCsv(result: ExtendedResponse) {
     "throughput_tasks_per_second",
     "peak_backlog",
     "final_backlog",
+    "scheduler_cpu_core_seconds",
+    "scheduler_cpu_capacity_core_seconds",
+    "scheduler_cpu_utilization_fraction",
+    "scheduler_resident_memory_gib_seconds",
+    "scheduler_memory_capacity_gib_seconds",
+    "scheduler_memory_utilization_fraction",
     ...timingKeys.flatMap((key) =>
       timingStats.map(
         (stat) => key + "_" + stat + (stat === "count" ? "" : "_seconds"),
@@ -142,6 +148,12 @@ export function extendedMetricsCsv(result: ExtendedResponse) {
         task?.throughput_per_second,
         task?.peak_backlog,
         task?.final_backlog,
+        task?.scheduler_utilization?.cpu_core_seconds,
+        task?.scheduler_utilization?.cpu_capacity_core_seconds,
+        task?.scheduler_utilization?.cpu_fraction,
+        task?.scheduler_utilization?.memory_gib_seconds,
+        task?.scheduler_utilization?.memory_capacity_gib_seconds,
+        task?.scheduler_utilization?.memory_fraction,
         ...timingKeys.flatMap((metric) =>
           timingStats.map((stat) => task?.timing_seconds[metric][stat]),
         ),

@@ -99,6 +99,14 @@ export interface TaskMetrics {
   suspended_final: number;
   never_admitted: number;
   throughput_per_second: number;
+  scheduler_utilization?: {
+    cpu_core_seconds: number;
+    cpu_capacity_core_seconds: number;
+    cpu_fraction: number | null;
+    memory_gib_seconds: number;
+    memory_capacity_gib_seconds: number;
+    memory_fraction: number | null;
+  };
   peak_backlog: number;
   final_backlog: number;
   timing_seconds: Record<

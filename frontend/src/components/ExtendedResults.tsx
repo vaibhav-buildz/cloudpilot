@@ -16,6 +16,15 @@ function TaskResults({ tasks }: { tasks: TaskMetrics }) {
   const intervals = tasks.timeline.map((step) => step.elapsed_seconds);
   return (
     <div className="diag-section">
+      {tasks.scheduler_utilization && (
+        <p>
+          Scheduler utilization from actual task consumption. CPU{" "}
+          {percent(tasks.scheduler_utilization.cpu_fraction)} of allocated
+          core-seconds. Resident task memory{" "}
+          {percent(tasks.scheduler_utilization.memory_fraction)} of allocated
+          GiB-seconds. Suspended tasks release their memory reservation.
+        </p>
+      )}
       <dl className="extended-stats">
         <div>
           <dt>Completion</dt>
@@ -238,6 +247,8 @@ export function ExtendedResults({
         <p>
           Each resource uses its own causal static capacity. Joint validation
           counts rows where either resource is under-allocated.
+          Demand-to-capacity utilization compares observed workload demand with
+          allocated capacity. Task consumption is shown separately below.
         </p>
         <div
           className="exp-table-wrap"
@@ -257,7 +268,7 @@ export function ExtendedResults({
                   "RMSE (" + unit + ")",
                   "Test violation",
                   "Savings",
-                  "Utilization",
+                  "Demand / capacity",
                   "Wastage",
                   "Joint validation violation",
                   "Joint test violation",

@@ -11,7 +11,6 @@ import numpy as np
 INTERVAL_SECONDS = 300
 QUEUE_LIMIT = 32
 ADMITTED_LIMIT = 32
-EPSILON = 1e-9
 
 
 @dataclass(frozen=True)
@@ -34,12 +33,20 @@ class TaskState:
     suspended: bool = False
 
 
+@dataclass(frozen=True)
+class IntervalUsage:
+    cpu_core_seconds: float
+    memory_gib_seconds: float
+
+
 def run_service(
     tasks: list[Task],
     cpu: np.ndarray,
     memory: np.ndarray,
     interval_seconds: float = INTERVAL_SECONDS,
     queue_limit: int = QUEUE_LIMIT,
+    *,
+    usage: list[IntervalUsage] | None = None,
 ) -> tuple[list[TaskState], list[int]]:
     """Execute one FIFO service, with exact completion events inside each interval."""
     if (
@@ -85,6 +92,8 @@ def run_service(
         active: list[TaskState] = []
         suspended: list[TaskState] = []
         available = float(gib)
+        cpu_used = 0.0
+        memory_used = 0.0
         for state in admitted:
             if state.task.memory_gib <= available:
                 state.suspended = False
@@ -111,26 +120,37 @@ def run_service(
                 admitted.append(state)
                 available -= state.task.memory_gib
                 active.append(state)
+            resident = float(gib) - available
             if not active or cores == 0:
+                memory_used += resident * (end - now)
                 break
             rate = float(cores) / len(active)
-            duration = min(end - now, min(state.remaining for state in active) / rate)
+            remaining_time = end - now
+            finish_after = min(state.remaining for state in active) / rate
+            duration = min(remaining_time, finish_after)
+            memory_used += resident * duration
             completed = []
             for state in active:
                 if state.first_service is None:
                     state.first_service = now
-                state.remaining -= rate * duration
-                if state.remaining <= EPSILON:
+                if state.remaining / rate == duration:
+                    cpu_used += state.remaining
                     state.remaining = 0.0
                     state.completion = now + duration
                     available += state.task.memory_gib
                     completed.append(state.task.id)
+                else:
+                    progress = min(state.remaining, rate * duration)
+                    cpu_used += progress
+                    state.remaining -= progress
             now += duration
             if completed:
                 complete_ids = set(completed)
                 active = [state for state in active if state.task.id not in complete_ids]
                 admitted = [state for state in admitted if state.task.id not in complete_ids]
         backlog.append(len(waiting) + len(suspended))
+        if usage is not None:
+            usage.append(IntervalUsage(cpu_used, memory_used))
     return states, backlog
 
 

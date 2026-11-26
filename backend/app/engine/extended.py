@@ -154,9 +154,15 @@ def simulate_policy(
     states = []
     backlog = np.zeros(cpu.shape[1], dtype=int)
     completed_by_step = np.zeros(cpu.shape[1], dtype=int)
+    cpu_used = memory_used = 0.0
     for jobs, cpu_service, memory_service in zip(tasks, cpu, memory, strict=True):
         _check_deadline(deadline, "task simulation")
-        service_states, service_backlog = run_service(jobs, cpu_service, memory_service)
+        usage = []
+        service_states, service_backlog = run_service(
+            jobs, cpu_service, memory_service, usage=usage
+        )
+        cpu_used += sum(row.cpu_core_seconds for row in usage)
+        memory_used += sum(row.memory_gib_seconds for row in usage)
         states.extend(service_states)
         backlog += service_backlog
         for state in service_states:
@@ -164,6 +170,16 @@ def simulate_policy(
                 step = max(0, int(np.ceil(state.completion / INTERVAL_SECONDS)) - 1)
                 completed_by_step[step] += 1
     summary = task_metrics(states, backlog.tolist(), len(backlog) * INTERVAL_SECONDS)
+    cpu_capacity = float(cpu.sum()) * INTERVAL_SECONDS
+    memory_capacity = float(memory.sum()) * INTERVAL_SECONDS
+    summary["scheduler_utilization"] = {
+        "cpu_core_seconds": cpu_used,
+        "cpu_capacity_core_seconds": cpu_capacity,
+        "cpu_fraction": cpu_used / cpu_capacity if cpu_capacity else None,
+        "memory_gib_seconds": memory_used,
+        "memory_capacity_gib_seconds": memory_capacity,
+        "memory_fraction": memory_used / memory_capacity if memory_capacity else None,
+    }
     # Per-bin throughput uses every observed completion. Backlog is sampled at the bin end.
     chunks = np.array_split(np.arange(len(backlog)), min(MAX_POINTS, len(backlog)))
     summary["timeline"] = [
