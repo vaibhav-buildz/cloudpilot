@@ -15,10 +15,13 @@ import {
   ListTree,
 } from "lucide-react";
 import { AllocationBarChart } from "../components/AllocationBarChart";
+import errors from "../data/study_prediction_errors.json";
 import study from "../data/study_summary.json";
 import "./research.css";
+import "../components/research-diagnostics.css";
 
 type Split = "time" | "service";
+
 type Policy = (typeof study.methods_summary_time)[number];
 type Metric = "median_savings_pct" | "median_violation_pct" | "utilization_pct";
 const titles: Record<Metric, string> = {
@@ -429,6 +432,52 @@ export function StudyPage() {
 
       <ConfidencePlot split={split} rows={rows} />
       <PolicyTable policies={policies} split={split} />
+
+      <details className="research-disclosure research-panel">
+        <summary>
+          <ListTree size={17} aria-hidden="true" />
+          <h2>Supplemental prediction errors</h2>
+          <ChevronDown size={16} aria-hidden="true" />
+        </summary>
+        <div className="diag-section">
+          <p>
+            {errors.provenance.aggregation} All ten original seeds contribute to
+            each cell.
+          </p>
+          <div
+            className="research-scroll"
+            tabIndex={0}
+            role="region"
+            aria-label="Study prediction errors"
+          >
+            <table className="research-table">
+              <caption>Held-out prediction errors · {split} split</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Method</th>
+                  <th scope="col">MAE (cores)</th>
+                  <th scope="col">MSE (cores²)</th>
+                  <th scope="col">RMSE (cores)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(
+                  split === "time"
+                    ? errors.metrics.time_split
+                    : errors.metrics.service_split,
+                ).map(([method, error]) => (
+                  <tr key={method}>
+                    <th scope="row">{method}</th>
+                    <td>{error.mae.toFixed(4)}</td>
+                    <td>{error.mse.toFixed(4)}</td>
+                    <td>{error.rmse.toFixed(4)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </details>
 
       <details className="research-disclosure research-panel">
         <summary>

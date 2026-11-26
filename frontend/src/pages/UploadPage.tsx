@@ -232,6 +232,12 @@ export function UploadPage() {
               <code>{example}</code>
             </pre>
             <h3>Trace requirements</h3>
+            <p>
+              <a href="/sample-workload.csv" download>
+                Download sample workload CSV
+              </a>{" "}
+              · 4 services, 600 intervals
+            </p>
             <ul className="exp-requirements">
               <li>
                 {MIN_SERVICES}–{limits.max_services} services per workload
@@ -241,6 +247,11 @@ export function UploadPage() {
                 shortest trace
               </li>
               <li>Longer traces are trimmed to the shortest service trace.</li>
+              <li>
+                Use unique, evenly spaced timestamps per service. The parser
+                sorts timestamps as text and aligns services by row position.
+                Zero-pad numeric steps.
+              </li>
             </ul>
             {usingFallback && (
               <p className="exp-note">

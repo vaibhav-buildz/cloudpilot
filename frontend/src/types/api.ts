@@ -7,6 +7,9 @@ export interface LimitsResponse {
 }
 
 export interface MethodMetrics {
+  mae?: number | null;
+  mse?: number | null;
+  rmse?: number | null;
   margin_value: number | null;
   margin_type: string | null;
   is_feasible: boolean;
@@ -26,12 +29,40 @@ export interface HypothesisVerdict {
 }
 
 export interface SplitComparison {
+  traces?: HeldOutTrace[];
   comparator: string;
   comparator_is_feasible: boolean;
   methods: Record<string, MethodMetrics>;
 }
 
+export interface HeldOutTrace {
+  service_index: number;
+  steps: number[];
+  actual: number[];
+  static_capacity: number;
+  methods: Record<
+    string,
+    { predicted: number[] | null; allocated: number[] | null }
+  >;
+}
+
+export type DemandStatistics = Record<
+  "mean" | "std_dev" | "min" | "max" | "median" | "p05" | "p95" | "p99",
+  number
+>;
+
+export interface WorkloadAnalysis {
+  statistics: DemandStatistics;
+  histogram: { edges: number[]; counts: number[] };
+  steps: number[];
+  mean_demand: number[];
+  peak_demand: number[];
+  peak_step: number;
+  services: Array<DemandStatistics & { service_index: number }>;
+}
+
 export interface SimulationResponse {
+  workload_analysis?: WorkloadAnalysis;
   run_id?: string;
   saved?: boolean;
   disclaimer: string;

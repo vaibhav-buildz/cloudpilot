@@ -9,8 +9,14 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import type { HypothesisVerdict, SimulationResponse } from "../types/api";
+import type {
+  HypothesisVerdict,
+  MethodMetrics,
+  SimulationResponse,
+} from "../types/api";
 import { AllocationBarChart } from "./AllocationBarChart";
+import { HeldOutCharts, WorkloadDiagnostics } from "./ResearchDiagnostics";
+import { metricsCsv, predictionError } from "./experimentExport";
 import "../pages/experiments.css";
 
 interface Props {
@@ -58,22 +64,49 @@ function EfficiencyFinding({
   );
 }
 
-function downloadResult(result: SimulationResponse) {
-  const blob = new Blob([JSON.stringify(result, null, 2)], {
-    type: "application/json",
-  });
+function downloadResult(result: SimulationResponse, format: "json" | "csv") {
+  const blob = new Blob(
+    [format === "json" ? JSON.stringify(result, null, 2) : metricsCsv(result)],
+    {
+      type: format === "json" ? "application/json" : "text/csv;charset=utf-8",
+    },
+  );
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = `cloudpilot-${result.run_id ?? "experiment"}.json`;
+  anchor.download = `cloudpilot-${result.run_id ?? "experiment"}.${format}`;
   document.body.append(anchor);
   anchor.click();
   anchor.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
+const columns = {
+  name: "Policy",
+  is_feasible: "Validation",
+  margin_value: "Margin",
+  mae: "MAE (cores)",
+  mse: "MSE (cores²)",
+  rmse: "RMSE (cores)",
+  violation_rate: "Violation",
+  savings: "Savings",
+  utilization: "Utilization",
+  wastage: "Wastage",
+} as const;
+type Column = keyof typeof columns;
+
+function metricValue(name: string, method: MethodMetrics, key: Column) {
+  if (key === "name") return name;
+  if (key === "mae" || key === "mse" || key === "rmse")
+    return predictionError(name, method, key);
+  if (!method.is_feasible && key !== "is_feasible" && key !== "violation_rate")
+    return undefined;
+  return method[key] ?? undefined;
+}
+
 export function SimulationResultView({ result, source, persisted }: Props) {
   const [split, setSplit] = useState<"TIME" | "SERVICE">("TIME");
+  const [sort, setSort] = useState<{ key: Column; descending: boolean }>();
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
     if (!persisted) heading.current?.focus();
@@ -83,7 +116,7 @@ export function SimulationResultView({ result, source, persisted }: Props) {
     <button
       type="button"
       className="btn btn-secondary"
-      onClick={() => downloadResult(result)}
+      onClick={() => downloadResult(result, "json")}
     >
       <Download size={15} aria-hidden="true" />
       Export JSON
@@ -109,6 +142,19 @@ export function SimulationResultView({ result, source, persisted }: Props) {
   const comparison =
     split === "TIME" ? result.time_split : result.service_split;
   const params = result.parameters;
+  const rows = Object.entries(comparison.methods);
+  if (sort)
+    rows.sort(([nameA, a], [nameB, b]) => {
+      const x = metricValue(nameA, a, sort.key);
+      const y = metricValue(nameB, b, sort.key);
+      if (x === undefined) return y === undefined ? 0 : 1;
+      if (y === undefined) return -1;
+      const order =
+        typeof x === "string"
+          ? x.localeCompare(String(y))
+          : Number(x) - Number(y);
+      return sort.descending ? -order : order;
+    });
   const saved = persisted ?? result.saved;
   const chartItems = Object.entries(comparison.methods)
     .filter(([, method]) => method.is_feasible)
@@ -142,7 +188,17 @@ export function SimulationResultView({ result, source, persisted }: Props) {
             steps · {percent(params.target_violation)} target
           </p>
         </div>
-        {exportButton}
+        <div className="diag-exports">
+          {exportButton}
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => downloadResult(result, "csv")}
+          >
+            <Download size={15} aria-hidden="true" />
+            Export metrics CSV
+          </button>
+        </div>
       </header>
       <div className="exp-receipt">
         <span>
@@ -193,6 +249,14 @@ export function SimulationResultView({ result, source, persisted }: Props) {
               unit="%"
             />
           )}
+          <p className="exp-context">
+            Prediction error uses raw forecasts on held-out rows. MAE is mean
+            absolute error, MSE is mean squared error, and RMSE is the square
+            root of MSE. Savings compare capacity with static reservation.
+            Utilization is demand divided by allocation. Wastage is unused
+            capacity divided by allocation. Infeasible methods show an
+            unmargined violation diagnostic.
+          </p>
         </div>
         <div
           className="exp-table-wrap"
@@ -206,23 +270,36 @@ export function SimulationResultView({ result, source, persisted }: Props) {
             </caption>
             <thead>
               <tr>
-                {[
-                  "Policy",
-                  "Validation",
-                  "Margin",
-                  "Violation",
-                  "Savings",
-                  "Utilization",
-                  "Wastage",
-                ].map((label) => (
-                  <th key={label} scope="col">
-                    {label}
+                {(Object.keys(columns) as Column[]).map((key) => (
+                  <th
+                    key={key}
+                    scope="col"
+                    aria-sort={
+                      sort?.key === key
+                        ? sort.descending
+                          ? "descending"
+                          : "ascending"
+                        : undefined
+                    }
+                  >
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSort({
+                          key,
+                          descending: sort?.key === key && !sort.descending,
+                        })
+                      }
+                    >
+                      {columns[key]}
+                      {sort?.key === key && (sort.descending ? " ↓" : " ↑")}
+                    </button>
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {Object.entries(comparison.methods).map(([name, method]) => (
+              {rows.map(([name, method]) => (
                 <tr key={name}>
                   <th scope="row">{name}</th>
                   <td>{method.is_feasible ? "Feasible" : "Infeasible"}</td>
@@ -230,9 +307,14 @@ export function SimulationResultView({ result, source, persisted }: Props) {
                     {method.margin_value == null
                       ? "—"
                       : method.margin_type === "additive"
-                        ? `+${method.margin_value.toFixed(2)} pp`
+                        ? `+${method.margin_value.toFixed(2)} cores`
                         : `×${method.margin_value.toFixed(2)}`}
                   </td>
+                  {(["mae", "mse", "rmse"] as const).map((key) => (
+                    <td key={key}>
+                      {predictionError(name, method, key)?.toFixed(4) ?? "—"}
+                    </td>
+                  ))}
                   <td>{percent(method.violation_rate)}</td>
                   {[method.savings, method.utilization, method.wastage].map(
                     (value, i) => (
@@ -251,6 +333,18 @@ export function SimulationResultView({ result, source, persisted }: Props) {
           policies.
         </p>
       </div>
+      {comparison.traces?.length ? (
+        <div className="exp-panel">
+          <HeldOutCharts key={split} traces={comparison.traces} />
+        </div>
+      ) : (
+        <p className="exp-context">
+          Held-out traces are unavailable for this record.
+        </p>
+      )}
+      {result.workload_analysis && (
+        <WorkloadDiagnostics workload={result.workload_analysis} />
+      )}
       <section className="exp-panel">
         <header className="exp-panel-heading">
           <FlaskConical aria-hidden="true" />

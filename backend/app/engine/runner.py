@@ -15,6 +15,7 @@ from app.engine.baselines import (
     tune_ewma,
 )
 from app.engine.bootstrap import paired_bootstrap_test
+from app.engine.diagnostics import MAX_POINTS, MAX_SERVICES, describe_workload, sample_indices
 from app.engine.evaluate import EvaluationMetrics, compute_metrics
 from app.engine.features import (
     MIN_HISTORY_REQUIRED,
@@ -48,6 +49,7 @@ def run_split_pipeline(
     target_violation: float,
     deadline: float,
     n_estimators_override: int | None = None,
+    include_diagnostics: bool = False,
 ) -> dict[str, Any]:
     """Execute feature generation, training, validation margin tuning, and test evaluation.
 
@@ -214,6 +216,23 @@ def run_split_pipeline(
     # 5. Evaluate all methods on Test Split over identical rows
     _check_deadline(deadline, "test evaluation")
     test_results: dict[str, dict[str, Any]] = {}
+    trace_rows = []
+    if include_diagnostics:
+        offsets = sample_indices(n_test_steps, MAX_POINTS)
+        for index in sample_indices(len(test_services), MAX_SERVICES):
+            rows = index * n_test_steps + offsets
+            trace_rows.append(
+                (
+                    rows,
+                    {
+                        "service_index": int(test_services[index]),
+                        "steps": t_test[rows].tolist(),
+                        "actual": y_test[rows].tolist(),
+                        "static_capacity": float(static_test_flat[rows[0]]),
+                        "methods": {},
+                    },
+                )
+            )
 
     for name in list(models.keys()) + ["static", "rolling_max_48", "rolling_p99", "ewma"]:
         preds = test_preds[name]
@@ -249,6 +268,7 @@ def run_split_pipeline(
             "is_feasible": metrics.is_feasible,  # strictly validation-determined
             "mae": metrics.mae,
             "rmse": metrics.rmse,
+            "mse": metrics.mse,
             "margin_type": margin.margin_type if margin else None,
             "margin_value": margin.margin_value if margin else None,
             "per_service_sum_a": metrics.per_service_sum_a,
@@ -256,11 +276,17 @@ def run_split_pipeline(
             "per_service_sum_demand": metrics.per_service_sum_demand,
             "per_service_savings": metrics.per_service_savings,
         }
+        for rows, trace in trace_rows:
+            trace["methods"][name] = {
+                "predicted": preds[rows].tolist() if name != "static" else None,
+                "allocated": alloc[rows].tolist() if model_val_feasible else None,
+            }
 
     return {
         "comparator": comparator_name,
         "comparator_is_feasible": comparator_is_feasible,
         "methods": test_results,
+        **({"traces": [trace for _, trace in trace_rows]} if include_diagnostics else {}),
     }
 
 
@@ -272,6 +298,7 @@ def run_experiment(
     timeout_seconds: float = 60.0,
     workload: WorkloadData | None = None,
     n_estimators_override: int | None = None,
+    include_diagnostics: bool = False,
 ) -> dict[str, Any]:
     """Execute complete CloudPilot benchmark across TIME and SERVICE splits."""
     start_time = time.time()
@@ -316,6 +343,7 @@ def run_experiment(
         target_violation=target_violation,
         deadline=deadline,
         n_estimators_override=n_estimators_override,
+        include_diagnostics=include_diagnostics,
     )
 
     # Hypothesis 1: GBR_q95 vs Comparator on TIME split
@@ -365,6 +393,7 @@ def run_experiment(
         target_violation=target_violation,
         deadline=deadline,
         n_estimators_override=n_estimators_override,
+        include_diagnostics=include_diagnostics,
     )
 
     # Hypothesis 2: Non-inferiority of GBR_q95 vs Comparator on SERVICE split within -1.0 pp
@@ -395,9 +424,15 @@ def run_experiment(
     h3_supported = (v_time <= 0.015) and (v_srv <= 0.015)
     h3_verdict = "SUPPORTED" if h3_supported else "NOT_SUPPORTED"
 
+    diagnostics = {}
+    if include_diagnostics:
+        _check_deadline(deadline, "workload diagnostics")
+        diagnostics["workload_analysis"] = describe_workload(demand)
+        _check_deadline(deadline, "workload diagnostics")
     elapsed_seconds = round(time.time() - start_time, 2)
 
     return {
+        **diagnostics,
         "disclaimer": (
             "Results describe synthetic or uploaded workload data within the discrete simulation "
             "engine and do not model physical cloud infrastructure."
@@ -410,9 +445,7 @@ def run_experiment(
             "target_violation": target_violation,
         },
         "time_split": {
-            "comparator": comparator_time,
-            "comparator_is_feasible": comp_time_feasible,
-            "methods": time_split_res["methods"],
+            **time_split_res,
             "h1": {
                 "hypothesis": "H1: GBR_q95 has higher test savings than Comparator on TIME split",
                 "verdict": h1_verdict,
@@ -423,9 +456,7 @@ def run_experiment(
             },
         },
         "service_split": {
-            "comparator": comparator_srv,
-            "comparator_is_feasible": comp_srv_feasible,
-            "methods": service_split_res["methods"],
+            **service_split_res,
             "h2": {
                 "hypothesis": (
                     "H2: GBR_q95 non-inferior to Comparator within -1.0 pp on SERVICE split"

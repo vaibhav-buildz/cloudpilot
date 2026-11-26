@@ -1,0 +1,95 @@
+﻿.diag-section {
+  display: grid;
+  gap: 1rem;
+  padding: 1.25rem;
+  min-width: 0;
+}
+.diag-section p {
+  color: var(--secondary);
+  overflow-wrap: anywhere;
+}
+.diag-controls,
+.diag-chart ul {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.diag-controls select {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--strong-border);
+  border-radius: 4px;
+  padding: 0.4rem;
+}
+.diag-chart {
+  border: 1px solid var(--border);
+  padding: 0.85rem;
+  border-radius: 6px;
+  min-width: 0;
+}
+.diag-chart svg {
+  width: 100%;
+  max-height: 270px;
+}
+.diag-chart svg text {
+  fill: var(--muted);
+  font: 11px var(--font-mono);
+}
+.diag-chart svg line {
+  stroke: var(--border);
+}
+.diag-chart svg .diag-cursor {
+  stroke: var(--muted);
+  stroke-dasharray: 4;
+}
+.diag-chart .diag-line {
+  fill: none;
+  stroke: var(--text);
+  stroke-width: 1.6;
+  vector-effect: non-scaling-stroke;
+}
+.diag-chart .diag-line-1 {
+  stroke: var(--accent);
+}
+.diag-chart .diag-line-2 {
+  stroke: var(--muted);
+  stroke-dasharray: 5 4;
+}
+.diag-chart .diag-line-3 {
+  stroke: var(--accent-text);
+  stroke-dasharray: 2 4;
+}
+.diag-chart label {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+}
+.diag-chart input {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent);
+}
+.diag-chart ul {
+  padding: 0;
+  list-style: none;
+  font-size: 0.8rem;
+  color: var(--secondary);
+}
+.diag-chart li[data-series="1"] {
+  color: var(--accent-text);
+}
+.exp-table th button {
+  border: 0;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+}
+.exp-table th button:hover {
+  text-decoration: underline;
+}
+.diag-exports {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}

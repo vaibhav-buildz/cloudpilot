@@ -1,0 +1,121 @@
+{
+  "config": {
+    "n_services": 200,
+    "n_steps": 4032,
+    "target_violation": 0.01,
+    "seeds": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ]
+  },
+  "provenance": {
+    "source": "Original v2 per-seed study results",
+    "sha256": {
+      "study_seed_1.json": "d83300ae2cab22f2ac8753d62355a1da4003133dda04ea5ac015de25722e55e9",
+      "study_seed_2.json": "72fc4b031253dc6e90732464cef3ab63b632e549060c3bdacf9b6b4b4dd7a619",
+      "study_seed_3.json": "211397faf365cf7c15aecbd5c55b7a6ebb979ac7b7f5d3c739ad6726f51da989",
+      "study_seed_4.json": "4e335fa64200e74e2c92f17f2cdff4df81e23a2b1193e69be4d623b88ad85387",
+      "study_seed_5.json": "26987bef8eee1c4afe968906eaf97d32e48a4fded07f82824291d3799948f9e3",
+      "study_seed_6.json": "775e9b5601b30dbc7e20c0ad7a6c8b5743e52f1cb9df931adadcf0bc71df9026",
+      "study_seed_7.json": "14136b969e61258b2ea43907574fa97f290c0d48a73dddb0b60fdf819817e10d",
+      "study_seed_8.json": "f7a5d1b4ad6581da007781f5f9a151fa9e8ebee7bc2903223d21d67f3042aed0",
+      "study_seed_9.json": "188afa0be0e89d92c61e694c227df770d2683724995b0ef2273b7806756f3885",
+      "study_seed_10.json": "71e4dae01aa0cb57a0d7899861cb1912a258e4e4fb72486fd1419d03e568614c"
+    },
+    "aggregation": "Unweighted mean of each seed's held-out metric, for each split and method. Legacy per-seed MSE is recovered from full-precision RMSE squared (within floating-point roundoff). Mean RMSE is computed separately."
+  },
+  "metrics": {
+    "time_split": {
+      "LR": {
+        "mae": 4.060400111064893,
+        "mse": 89.0676950078708,
+        "rmse": 9.427912743570776
+      },
+      "DT": {
+        "mae": 3.8202614032478834,
+        "mse": 87.40960459965653,
+        "rmse": 9.340916114524017
+      },
+      "RF": {
+        "mae": 3.626596779388719,
+        "mse": 83.1436892081204,
+        "rmse": 9.109556582459517
+      },
+      "GB": {
+        "mae": 3.8185077123283886,
+        "mse": 85.22793928554267,
+        "rmse": 9.224028739600632
+      },
+      "GBR_q95": {
+        "mae": 7.49154567313089,
+        "mse": 162.26945363095922,
+        "rmse": 12.722566682535016
+      },
+      "rolling_max_48": {
+        "mae": 27.854236993553073,
+        "mse": 1872.183735381364,
+        "rmse": 43.23863950332448
+      },
+      "rolling_p99": {
+        "mae": 54.370522165319215,
+        "mse": 3936.2009455584757,
+        "rmse": 62.7051322249942
+      },
+      "ewma": {
+        "mae": 5.851534600184387,
+        "mse": 164.92030058265073,
+        "rmse": 12.829296443176334
+      }
+    },
+    "service_split": {
+      "LR": {
+        "mae": 4.034078731074702,
+        "mse": 87.64492590486023,
+        "rmse": 9.326307620800044
+      },
+      "DT": {
+        "mae": 3.7987678073503988,
+        "mse": 85.88174818579083,
+        "rmse": 9.229634201924966
+      },
+      "RF": {
+        "mae": 3.5899835990804925,
+        "mse": 81.3413587991427,
+        "rmse": 8.983957522653288
+      },
+      "GB": {
+        "mae": 3.7924903658608784,
+        "mse": 83.5984071952132,
+        "rmse": 9.108778594662347
+      },
+      "GBR_q95": {
+        "mae": 7.422014129700794,
+        "mse": 159.40787386597,
+        "rmse": 12.594161139535311
+      },
+      "rolling_max_48": {
+        "mae": 27.731138268474698,
+        "mse": 1831.0269655615643,
+        "rmse": 42.67568835667306
+      },
+      "rolling_p99": {
+        "mae": 51.477861647942134,
+        "mse": 3609.7968619263906,
+        "rmse": 60.00425939471907
+      },
+      "ewma": {
+        "mae": 5.54985824269175,
+        "mse": 153.78416710632513,
+        "rmse": 12.321263341396099
+      }
+    }
+  }
+}

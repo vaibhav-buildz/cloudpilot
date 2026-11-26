@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import io
 from collections import defaultdict
+from itertools import pairwise
 from math import isfinite
 
 import numpy as np
@@ -29,7 +30,7 @@ def load_workload_from_csv(csv_bytes: bytes) -> WorkloadData:
         )
 
     try:
-        text = csv_bytes.decode("utf-8")
+        text = csv_bytes.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
         raise ValueError("Uploaded file must be valid UTF-8 text.") from exc
 
@@ -94,7 +95,12 @@ def load_workload_from_csv(csv_bytes: bytes) -> WorkloadData:
 
     # Sort each service's records by timestamp
     for srv in service_ids:
-        service_records[srv].sort(key=lambda item: item[0])
+        records = service_records[srv]
+        records.sort(key=lambda item: item[0])
+        if any(a[0] == b[0] for a, b in pairwise(records)):
+            raise ValueError(
+                "Duplicate timestamp within a service. Provide one row per service and interval."
+            )
 
     # Determine step count across services
     step_counts = [len(service_records[srv]) for srv in service_ids]

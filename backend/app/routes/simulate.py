@@ -187,6 +187,7 @@ async def simulate_workload(
                 n_steps=req.n_steps,
                 target_violation=req.target_violation,
                 timeout_seconds=float(settings.SIM_TIMEOUT_SECONDS),
+                include_diagnostics=True,
             ),
             timeout=float(settings.SIM_TIMEOUT_SECONDS) + 5.0,
         )
@@ -307,6 +308,7 @@ async def simulate_csv_workload(
                 target_violation=target_violation,
                 timeout_seconds=float(settings.SIM_TIMEOUT_SECONDS),
                 workload=workload,
+                include_diagnostics=True,
             ),
             timeout=float(settings.SIM_TIMEOUT_SECONDS) + 5.0,
         )

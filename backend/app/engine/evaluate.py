@@ -18,6 +18,7 @@ class EvaluationMetrics:
     is_feasible: bool
     mae: float | None = None
     rmse: float | None = None
+    mse: float | None = None
     per_service_sum_a: list[float] | None = None
     per_service_sum_static: list[float] | None = None
     per_service_sum_demand: list[float] | None = None
@@ -89,10 +90,12 @@ def compute_metrics(
     # 4. Optional regression error metrics
     mae: float | None = None
     rmse: float | None = None
+    mse: float | None = None
     if predictions is not None:
         errors = predictions - demand
         mae = float(np.mean(np.abs(errors)))
-        rmse = float(np.sqrt(np.mean(errors**2)))
+        mse = float(np.mean(errors**2))
+        rmse = float(np.sqrt(mse))
 
     # 5. Per-service accounting (sums and aligned ratios)
     per_service_sum_a: list[float] | None = None
@@ -139,6 +142,7 @@ def compute_metrics(
         is_feasible=feasible_flag,
         mae=mae,
         rmse=rmse,
+        mse=mse,
         per_service_sum_a=per_service_sum_a,
         per_service_sum_static=per_service_sum_static,
         per_service_sum_demand=per_service_sum_demand,
