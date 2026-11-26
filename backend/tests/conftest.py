@@ -13,6 +13,14 @@ TEST_VALID_KEY = "test_key_with_a_length_of_at_least_32_characters_for_cloudpilo
 
 
 @pytest.fixture(autouse=True)
+def isolate_settings_from_dotenv(monkeypatch: pytest.MonkeyPatch):
+    """Prevent unit tests from reading local .env files or hitting live Supabase."""
+    monkeypatch.setitem(Settings.model_config, "env_file", None)
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    monkeypatch.delenv("SUPABASE_SERVICE_KEY", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def reset_rate_limiter():
     """Reset the in-memory sliding window rate limiter before each test."""
     rate_limiter.reset()

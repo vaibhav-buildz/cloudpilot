@@ -209,6 +209,24 @@ class SupabaseRunRepository:
             raise RuntimeError(f"PostgREST operation failed: {type(last_exc).__name__}") from None
         raise RuntimeError("PostgREST request failed with server error")
 
+    @staticmethod
+    def _format_postgrest_error(action: str, resp: httpx.Response) -> str:
+        """Build a concise error message including PostgREST code and message."""
+        base = f"Failed to {action}: HTTP {resp.status_code}"
+        try:
+            data = resp.json()
+            if isinstance(data, dict):
+                parts = []
+                if data.get("code"):
+                    parts.append(str(data["code"]))
+                if data.get("message"):
+                    parts.append(str(data["message"]))
+                if parts:
+                    return f"{base} ({': '.join(parts)})"
+        except Exception:
+            pass
+        return base
+
     async def save_run(
         self,
         client_id: str,
@@ -236,7 +254,7 @@ class SupabaseRunRepository:
             headers=headers,
         )
         if resp.status_code not in (200, 201):
-            raise RuntimeError(f"Failed to save simulation run: HTTP {resp.status_code}")
+            raise RuntimeError(self._format_postgrest_error("save simulation run", resp))
         data = resp.json()
         if isinstance(data, list) and len(data) > 0:
             return data[0]
@@ -262,7 +280,7 @@ class SupabaseRunRepository:
             params=query_params,
         )
         if resp.status_code != 200:
-            raise RuntimeError(f"Failed to list simulation runs: HTTP {resp.status_code}")
+            raise RuntimeError(self._format_postgrest_error("list simulation runs", resp))
         data = resp.json()
         return data if isinstance(data, list) else []
 
@@ -281,7 +299,7 @@ class SupabaseRunRepository:
             params=query_params,
         )
         if resp.status_code != 200:
-            raise RuntimeError(f"Failed to get simulation run: HTTP {resp.status_code}")
+            raise RuntimeError(self._format_postgrest_error("get simulation run", resp))
         data = resp.json()
         if isinstance(data, list) and len(data) > 0:
             return data[0]
@@ -304,7 +322,7 @@ class SupabaseRunRepository:
             headers=headers,
         )
         if resp.status_code != 200:
-            raise RuntimeError(f"Failed to delete simulation run: HTTP {resp.status_code}")
+            raise RuntimeError(self._format_postgrest_error("delete simulation run", resp))
         data = resp.json()
         return isinstance(data, list) and len(data) > 0
 

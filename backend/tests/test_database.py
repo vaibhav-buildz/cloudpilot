@@ -368,3 +368,46 @@ def test_db_down_ready_returns_503_and_simulation_returns_saved_false() -> None:
         sim_data = res_sim.json()
         assert sim_data["saved"] is False
         assert "time_split" in sim_data
+
+
+@pytest.mark.anyio
+async def test_supabase_repository_surfaces_postgrest_error_details() -> None:
+    """Verify PostgREST 400 error code and message are surfaced in RuntimeError."""
+
+    def mock_pgrst_error_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            json={
+                "code": "PGRST204",
+                "message": (
+                    "Could not find the 'client_id' column of 'simulation_runs' in the schema cache"
+                ),
+                "details": None,
+                "hint": None,
+            },
+        )
+
+    transport = httpx.MockTransport(mock_pgrst_error_handler)
+    client = httpx.AsyncClient(
+        base_url="https://mock.supabase.co/rest/v1",
+        headers={
+            "apikey": SECRET_KEY,
+            "Authorization": f"Bearer {SECRET_KEY}",
+            "Content-Type": "application/json",
+        },
+        transport=transport,
+    )
+    repo = SupabaseRunRepository(
+        supabase_url="https://mock.supabase.co",
+        supabase_service_key=SECRET_KEY,
+        client=client,
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        await repo.save_run("client_a", "simulated", {"seed": 1}, "ok")
+
+    err_msg = str(exc_info.value)
+    assert "HTTP 400" in err_msg
+    assert "PGRST204" in err_msg
+    assert "Could not find the 'client_id' column" in err_msg
+    assert SECRET_KEY not in err_msg
