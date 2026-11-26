@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     SIM_MAX_SERVICES: int = Field(default=20, ge=1)
     SIM_TIMEOUT_SECONDS: int = Field(default=60, ge=1)
     GLOBAL_SIM_PER_MIN: int = Field(default=20, ge=1)
+    ENABLE_EXTENDED_SIMULATION: bool = False
 
     # Optional Supabase integration for traces & persistence
     SUPABASE_URL: str | None = None
@@ -73,6 +74,10 @@ class Settings(BaseSettings):
     def allowed_origins_list(self) -> list[str]:
         """Return parsed list of allowed CORS origins."""
         return [origin.strip() for origin in self.ALLOWED_ORIGIN.split(",") if origin.strip()]
+
+    @property
+    def extended_simulation_enabled(self) -> bool:
+        return self.APP_ENV == "development" and self.ENABLE_EXTENDED_SIMULATION
 
     def is_ready(self) -> tuple[bool, str]:
         """Readiness check verifying current configuration state."""

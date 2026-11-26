@@ -6,7 +6,7 @@ import asyncio
 import logging
 import threading
 import time
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import (
     APIRouter,
@@ -23,6 +23,13 @@ from pydantic import BaseModel, Field
 
 from app.config import Settings, get_settings
 from app.engine.csv_loader import MAX_CSV_BYTES, load_workload_from_csv
+from app.engine.extended import (
+    MODE,
+    WEB_MAX_SERVICES,
+    WEB_MAX_STEPS,
+    parse_extended_csv,
+    run_extended,
+)
 from app.engine.features import MIN_WORKLOAD_SERVICES, MIN_WORKLOAD_STEPS
 from app.engine.runner import run_experiment
 from app.ratelimit import global_sim_limiter, rate_limiter
@@ -31,6 +38,23 @@ from app.security import verify_api_key
 logger = logging.getLogger("cloudpilot")
 
 router = APIRouter(tags=["Simulation"])
+ExperimentMode = Literal["cpu-only", "extended-v1"]
+
+
+def require_extended_enabled(mode: ExperimentMode, settings: Settings) -> None:
+    if mode == MODE and not settings.extended_simulation_enabled:
+        raise HTTPException(
+            status_code=403, detail="Extended simulation is available offline only."
+        )
+
+
+def check_extended_web_size(n_services: int, n_steps: int) -> None:
+    if n_services > WEB_MAX_SERVICES or n_steps > WEB_MAX_STEPS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Extended simulation permits up to {WEB_MAX_SERVICES} services and "
+            f"{WEB_MAX_STEPS} steps in local web mode. Use the offline CLI for larger runs.",
+        )
 
 
 class SimulationConcurrencyGate:
@@ -59,6 +83,7 @@ class SimulateRequest(BaseModel):
     """Parameters for synthetic workload simulation."""
 
     seed: int = Field(default=42, ge=0, description="Random seed for reproducibility")
+    mode: ExperimentMode = "cpu-only"
     n_services: int = Field(
         default=8, ge=MIN_WORKLOAD_SERVICES, description="Number of services to simulate"
     )
@@ -152,6 +177,7 @@ async def simulate_workload(
     client_id: Annotated[str, Depends(verify_api_key)],
 ) -> dict[str, Any]:
     """Run simulation on synthetic seeded workload across TIME and SERVICE splits."""
+    require_extended_enabled(req.mode, settings)
     if req.n_services > settings.SIM_MAX_SERVICES:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -170,6 +196,11 @@ async def simulate_workload(
             ),
         )
 
+    extended = req.mode == MODE
+    if extended:
+        check_extended_web_size(req.n_services, req.n_steps)
+    run = run_extended if extended else run_experiment
+    diagnostics = {} if extended else {"include_diagnostics": True}
     gate_client_id = rate_limiter.extract_client_id(request)
     if not concurrency_gate.acquire(gate_client_id):
         raise HTTPException(
@@ -181,13 +212,13 @@ async def simulate_workload(
     try:
         result = await asyncio.wait_for(
             asyncio.to_thread(
-                run_experiment,
+                run,
                 seed=req.seed,
                 n_services=req.n_services,
                 n_steps=req.n_steps,
                 target_violation=req.target_violation,
                 timeout_seconds=float(settings.SIM_TIMEOUT_SECONDS),
-                include_diagnostics=True,
+                **diagnostics,
             ),
             timeout=float(settings.SIM_TIMEOUT_SECONDS) + 5.0,
         )
@@ -207,6 +238,7 @@ async def simulate_workload(
                         "n_services": req.n_services,
                         "n_steps": req.n_steps,
                         "target_violation": req.target_violation,
+                        **({"mode": MODE} if extended else {}),
                     },
                     status="ok",
                     result=result,
@@ -250,8 +282,11 @@ async def simulate_csv_workload(
     form_target_violation: Annotated[
         float | None, Form(alias="target_violation", ge=0.005, le=0.05)
     ] = None,
+    mode: Annotated[ExperimentMode, Form()] = "cpu-only",
 ) -> dict[str, Any]:
     """Execute allocation experiment on user-uploaded workload CSV."""
+    require_extended_enabled(mode, settings)
+    extended = mode == MODE
     if form_target_violation is not None:
         target_violation = form_target_violation
     contents = await file.read()
@@ -262,15 +297,17 @@ async def simulate_csv_workload(
         )
 
     try:
-        workload = load_workload_from_csv(contents)
+        if extended:
+            workload = parse_extended_csv(contents)
+            n_services, n_steps = workload[0].shape
+        else:
+            workload = load_workload_from_csv(contents)
+            n_services, n_steps = workload.demand.shape
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
         ) from exc
-
-    n_services = workload.demand.shape[0]
-    n_steps = workload.demand.shape[1]
 
     if n_services > settings.SIM_MAX_SERVICES:
         raise HTTPException(
@@ -290,6 +327,10 @@ async def simulate_csv_workload(
             ),
         )
 
+    if extended:
+        check_extended_web_size(n_services, n_steps)
+    run = run_extended if extended else run_experiment
+    diagnostics = {} if extended else {"include_diagnostics": True}
     gate_client_id = rate_limiter.extract_client_id(request)
     if not concurrency_gate.acquire(gate_client_id):
         raise HTTPException(
@@ -301,14 +342,14 @@ async def simulate_csv_workload(
     try:
         result = await asyncio.wait_for(
             asyncio.to_thread(
-                run_experiment,
+                run,
                 seed=42,
                 n_services=n_services,
                 n_steps=n_steps,
                 target_violation=target_violation,
                 timeout_seconds=float(settings.SIM_TIMEOUT_SECONDS),
                 workload=workload,
-                include_diagnostics=True,
+                **diagnostics,
             ),
             timeout=float(settings.SIM_TIMEOUT_SECONDS) + 5.0,
         )
@@ -327,6 +368,7 @@ async def simulate_csv_workload(
                         "n_services": n_services,
                         "n_steps": n_steps,
                         "target_violation": target_violation,
+                        **({"mode": MODE} if extended else {}),
                     },
                     status="ok",
                     result=result,

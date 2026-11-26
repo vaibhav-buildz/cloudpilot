@@ -13,3 +13,17 @@ This protocol is separate from the published CPU-only benchmark. H1–H3 and the
 - Waiting means arrival to first memory admission. Time to first service means arrival to first positive CPU progress. Response means arrival to completion. Execution duration means completion minus admission and includes suspensions. Completion-only statistics are reported alongside unfinished, queued, suspended and rejected counts. Throughput is completions divided by elapsed simulated seconds. Backlog counts waiting plus suspended tasks.
 - Pilot uses seed 42, 4 services, 600 intervals, 1% target and default estimator parameters. A full offline study is pre-specified for seeds 1–10, 200 services, 4,032 intervals and 1% target with default estimators. Check resource requirements before running the full study. Report per-seed results and compare only policies on the same split and offered tasks. The pilot does not establish superiority or validate production latency.
 - Online execution is local development opt-in only, with existing request budgets and explicit workload caps. Larger runs use the offline CLI. Store bounded diagnostics and task samples, never raw uploads.
+
+## Running the protocol
+
+From the repository root, install the backend requirements and run:
+
+    python scripts/run_extended_study.py --output-dir results/extended-pilot
+
+Use --csv PATH for a single uploaded workload and --full for the ten-seed configuration. Choose a new output directory: the runner protects existing results from overwrite. Numeric CSV timestamps are zero-based or offset integer interval indices. ISO-8601 timestamps must have a UTC offset. Every service must cover the same grid. Extended inputs are capped at 200 services, 4,032 intervals, and 65,536 cores or GiB per observation. No uploaded identifiers or CSV bytes are stored in results.
+
+For local web execution, set ENABLE_EXTENDED_SIMULATION=true in the backend process with APP_ENV=development, and use the existing local frontend proxy. The development UI caps extended jobs at four services and 600 intervals, or lower configured limits. Production denies extended execution even with the flag set. Time budgets are cooperative between engine stages, so an individual offline estimator fit may finish after its deadline. Latency and utilization describe this simulator only. Workloads omit network delay, disk I/O, eviction overhead, and cross-service resource borrowing.
+
+## Pilot and deployment status
+
+The seed-42 pilot used the pre-specified configuration and default estimators. See [the pilot summary](../results/extended_v1_pilot_summary.json) for inputs, package versions, per-split task digests and measured results. The four-service, 600-step case took approximately 3.25 seconds in three subsequent local trials and returned about 389 kB of compact JSON. A 20-service, 1,000-step local stress case took 42.22 seconds and returned about 652 kB. That measurement leaves limited headroom against Render's existing 50-second engine budget and does not establish hosted performance. The ten-seed run remains pending. The original CPU-only runs took a median of 1,221.6 seconds per seed, and extended-v1 fits the model suite separately for each resource.

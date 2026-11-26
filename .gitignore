@@ -72,3 +72,4 @@ frontend/.env.*.local
 # Study results (commit aggregate summary only)
 results/*
 !results/study_summary.json
+!results/extended_v1_pilot_summary.json

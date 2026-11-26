@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from typing import Any
 
 import numpy as np
@@ -50,6 +51,7 @@ def run_split_pipeline(
     deadline: float,
     n_estimators_override: int | None = None,
     include_diagnostics: bool = False,
+    observe_allocations: Callable[[str, np.ndarray, np.ndarray, np.ndarray], None] | None = None,
 ) -> dict[str, Any]:
     """Execute feature generation, training, validation margin tuning, and test evaluation.
 
@@ -181,6 +183,7 @@ def run_split_pipeline(
     _check_deadline(deadline, "model training")
     models = get_model_instances(n_estimators_override=n_estimators_override)
     test_preds: dict[str, np.ndarray] = {}
+    model_val_preds: dict[str, np.ndarray] = {}
 
     for name, model in models.items():
         _check_deadline(deadline, f"training {name}")
@@ -188,6 +191,9 @@ def run_split_pipeline(
 
         # Validation prediction & margin tuning
         pred_val = model.predict(X_val)
+        if observe_allocations is not None:
+            pred_val = np.maximum(pred_val, 0.0)
+            model_val_preds[name] = pred_val
         allow_zero = name == "GBR_q95"
         val_margins[name] = select_margin(
             y_val_actual=y_val,
@@ -245,7 +251,16 @@ def run_split_pipeline(
             model_val_feasible = margin is not None
 
         if margin is not None:
-            alloc = apply_margin(preds, margin.margin_type, margin.margin_value, static_test_flat)
+            allocation_input = np.maximum(preds, 0.0) if observe_allocations else preds
+            alloc = apply_margin(
+                allocation_input, margin.margin_type, margin.margin_value, static_test_flat
+            )
+            if observe_allocations is not None:
+                val_preds = model_val_preds[name] if name in models else baseline_val_preds[name]
+                val_alloc = apply_margin(
+                    val_preds, margin.margin_type, margin.margin_value, static_val_flat
+                )
+                observe_allocations(name, y_val > val_alloc, y_test > alloc, alloc)
         else:
             alloc = preds
 
