@@ -1,32 +1,27 @@
-import React from "react";
+import { BrandMark } from "./BrandMark";
 
-export const Footer: React.FC = () => {
+const docs = "https://github.com/vaibhav-buildz/cloudpilot/blob/main/docs";
+
+export function Footer() {
   return (
     <footer className="site-footer">
-      <div>CloudPilot - ML-Based CPU Resource Allocation Research Prototype</div>
-      <div className="footer-links">
-        <a
-          href="https://github.com/vy979/cloudpilot/blob/main/docs/hypotheses.md"
-          target="_blank"
-          rel="noreferrer"
-        >
-          Hypotheses
-        </a>
-        <a
-          href="https://github.com/vy979/cloudpilot/blob/main/docs/study_plan.md"
-          target="_blank"
-          rel="noreferrer"
-        >
-          Study Plan
-        </a>
-        <a
-          href="https://github.com/vy979/cloudpilot/blob/main/docs/deviations.md"
-          target="_blank"
-          rel="noreferrer"
-        >
-          Deviations Log
-        </a>
+      <div className="footer-inner shell-width">
+        <span className="footer-brand">
+          <BrandMark />
+          CloudPilot
+        </span>
+        <nav aria-label="Research documentation">
+          <a href={`${docs}/hypotheses.md`} target="_blank" rel="noreferrer">
+            Hypotheses
+          </a>
+          <a href={`${docs}/study_plan.md`} target="_blank" rel="noreferrer">
+            Study plan
+          </a>
+          <a href={`${docs}/deviations.md`} target="_blank" rel="noreferrer">
+            Deviations log
+          </a>
+        </nav>
       </div>
     </footer>
   );
-};
+}

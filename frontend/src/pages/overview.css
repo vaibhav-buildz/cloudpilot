@@ -1,0 +1,342 @@
+﻿.overview-page {
+  --diagram-line: #505050;
+  --diagram-edge: #777;
+  --diagram-top: #181818;
+  --diagram-cell: #143a65;
+  display: grid;
+  gap: 1.35rem;
+}
+[data-theme="light"] .overview-page {
+  --diagram-line: #aaa;
+  --diagram-edge: #888;
+  --diagram-top: #eee;
+  --diagram-cell: #b3d4ff;
+}
+.overview-hero {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  align-items: center;
+  position: relative;
+  padding-bottom: 0.6rem;
+}
+.study-label {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font: 500 0.69rem var(--font-mono);
+  letter-spacing: 0.095em;
+  color: var(--secondary);
+}
+.study-label i {
+  width: 7px;
+  height: 7px;
+  background: var(--accent);
+  border-radius: 50%;
+}
+.overview-hero h1 {
+  margin: 0.65rem 0 0.45rem;
+}
+.overview-hero p,
+.overview-method p {
+  color: var(--secondary);
+  max-width: 545px;
+  font-size: 0.95rem;
+}
+.overview-actions {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 1.15rem;
+}
+.allocation-diagram {
+  width: 100%;
+  max-height: 205px;
+}
+.overview-metrics,
+.overview-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  min-width: 0;
+}
+.overview-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+}
+.overview-metrics > div {
+  padding: 1.1rem 1.35rem;
+  border-right: 1px solid var(--border);
+}
+.overview-metrics > div:last-child {
+  border: 0;
+}
+.overview-metrics span,
+.overview-panel h2,
+.overview-panel-head,
+.split-toggle,
+.chart-legend,
+.chart-legend span,
+.hyp-row,
+.hyp-row > span,
+.study-link {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+.overview-metrics span {
+  color: var(--secondary);
+  font-size: 0.84rem;
+}
+.overview-metrics strong {
+  display: block;
+  font-size: clamp(1.65rem, 2.5vw, 2.2rem);
+  font-weight: 530;
+  letter-spacing: -0.055em;
+  margin: 0.26rem 0;
+}
+.overview-metrics small,
+.hyp-row small,
+.overview-panel-head p {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+.overview-panels {
+  display: grid;
+  grid-template-columns: minmax(0, 1.65fr) minmax(300px, 1fr);
+  gap: 1.25rem;
+}
+.overview-panel-head {
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 1.25rem;
+  gap: 0.65rem;
+}
+.overview-panel h2 {
+  font-size: 1.06rem;
+}
+.overview-panel-head p {
+  margin-top: 0.35rem;
+}
+.split-toggle {
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 2px;
+}
+.split-toggle button {
+  background: none;
+  border: 0;
+  font-size: 0.75rem;
+  padding: 4px 9px;
+  color: var(--muted);
+  border-radius: 3px;
+}
+.split-toggle button[aria-pressed="true"] {
+  background: var(--hover);
+  color: var(--text);
+}
+.chart-body {
+  padding: 0 1.45rem 0.9rem;
+}
+.chart-legend {
+  font: 0.73rem var(--font-mono);
+  gap: 1.1rem;
+  color: var(--secondary);
+}
+.chart-legend i {
+  width: 14px;
+  border-top: 2px solid var(--accent);
+}
+.chart-legend .legend-base {
+  border-top: 2px dashed var(--secondary);
+}
+.benchmark-plot {
+  position: relative;
+  height: 151px;
+  margin: 1.2rem 0.4rem 1.5rem 2.7rem;
+}
+.plot-axis span,
+.seed-axis span {
+  position: absolute;
+  font: 0.68rem var(--font-mono);
+  color: var(--muted);
+}
+.plot-axis span {
+  right: calc(100% + 9px);
+  transform: translateY(-50%);
+}
+.plot-area,
+.plot-area svg,
+.chart-scrubber {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.plot-area svg * {
+  vector-effect: non-scaling-stroke;
+}
+.plot-grid {
+  stroke: var(--border);
+  stroke-dasharray: 3 4;
+}
+.plot-base {
+  stroke: var(--secondary);
+  stroke-dasharray: 5 4;
+  stroke-width: 1.7;
+}
+.plot-model {
+  stroke: var(--accent);
+  stroke-width: 2.3;
+}
+.data-marker {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  transform: translate(-50%, -50%);
+}
+.chart-scrubber {
+  opacity: 0;
+  cursor: crosshair;
+  margin: 0;
+}
+.plot-area:has(:focus-visible) {
+  outline: 2px solid var(--accent);
+}
+.seed-axis {
+  position: absolute;
+  top: calc(100% + 5px);
+  width: 100%;
+}
+.seed-axis span {
+  transform: translateX(-50%);
+}
+.plot-caption {
+  text-align: center;
+  font: 0.72rem var(--font-mono);
+  color: var(--muted);
+}
+.plot-crosshair {
+  position: absolute;
+  inset-block: 0;
+  border-left: 1px dashed var(--muted);
+}
+.plot-tip {
+  pointer-events: none;
+  position: absolute;
+  top: 3px;
+  transform: translateX(4px);
+  background: var(--surface-raised);
+  padding: 0.55rem;
+  border: 1px solid var(--strong-border);
+  border-radius: 4px;
+  font: 0.67rem/1.7 var(--font-mono);
+  z-index: 1;
+  white-space: nowrap;
+}
+.plot-tip span {
+  display: block;
+}
+.plot-tip.tip-left {
+  transform: translateX(calc(-100% - 4px));
+}
+.hypotheses {
+  display: flex;
+  flex-direction: column;
+}
+.hyp-row {
+  flex: 1;
+  border-top: 1px solid var(--border);
+  padding: 0.65rem 1.15rem;
+}
+.hyp-row code {
+  font-size: 0.72rem;
+  padding: 4px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 4px;
+}
+.hyp-row strong,
+.hyp-row small {
+  display: block;
+}
+.hyp-row strong {
+  font-size: 0.84rem;
+  font-weight: 530;
+}
+.hyp-row > span {
+  margin-left: auto;
+  gap: 3px;
+  font-size: 0.69rem;
+  color: var(--muted);
+}
+.hyp-row > span.positive {
+  color: var(--accent-text);
+}
+.study-link {
+  border-top: 1px solid var(--border);
+  padding: 0.76rem 1.2rem;
+  color: var(--secondary);
+  font-size: 0.81rem;
+  text-decoration: none;
+}
+.study-link:hover {
+  color: var(--text);
+}
+.overview-method {
+  display: grid;
+  grid-template-columns: 1fr 3fr;
+  gap: 1rem;
+  border-top: 1px solid var(--border);
+  padding-top: 1.2rem;
+}
+.overview-method p {
+  max-width: none;
+}
+@media (max-width: 850px) {
+  .overview-panels {
+    grid-template-columns: 1fr;
+  }
+  .overview-metrics > div {
+    padding: 0.85rem;
+  }
+  .hyp-row {
+    min-height: 55px;
+  }
+}
+@media (max-width: 620px) {
+  .overview-hero {
+    display: block;
+  }
+  .allocation-diagram {
+    display: none;
+  }
+  .overview-metrics {
+    grid-template-columns: 1fr 1fr;
+  }
+  .overview-metrics > div:nth-child(2) {
+    border-right: 0;
+  }
+  .overview-metrics > div:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--border);
+  }
+  .overview-method {
+    display: block;
+  }
+  .overview-method h2 {
+    margin-bottom: 0.55rem;
+  }
+  .overview-panel-head {
+    padding: 1rem;
+  }
+  .overview-panel h2 {
+    font-size: 1rem;
+  }
+  .overview-panel h2 svg {
+    display: none;
+  }
+  .chart-body {
+    padding: 0 1rem 0.85rem;
+  }
+}

@@ -1,4 +1,6 @@
-import React from "react";
+import type { CSSProperties } from "react";
+import { ChevronDown } from "lucide-react";
+import "./allocation-chart.css";
 
 export interface AllocationBarItem {
   label: string;
@@ -13,84 +15,74 @@ interface AllocationBarChartProps {
   unit?: string;
 }
 
-export const AllocationBarChart: React.FC<AllocationBarChartProps> = ({
+export function AllocationBarChart({
   title,
   items,
   unit = "CPU units",
-}) => {
-  if (!items.length) {
-    return null;
-  }
+}: AllocationBarChartProps) {
+  if (!items.length) return null;
 
-  const maxValue = Math.max(...items.map((i) => i.value), 1e-6);
-  const chartHeight = items.length * 48 + 32;
-  const barHeight = 22;
-  const labelWidth = 140;
-  const chartWidth = 560;
-  const barAreaWidth = chartWidth - labelWidth - 80;
+  const values = items.map((item) => item.value);
+  const min = Math.min(0, ...values);
+  const max = Math.max(0, ...values);
+  const roughStep = (max - min || 1) / 4;
+  const base = 10 ** Math.floor(Math.log10(roughStep));
+  const step =
+    ([1, 2, 2.5, 5, 10].find((tick) => tick * base >= roughStep) ?? 10) * base;
+  const lower = Math.floor(min / step) * step;
+  const upper = Math.max(lower + step, Math.ceil(max / step) * step);
+  const ticks = Array.from(
+    { length: Math.round((upper - lower) / step) + 1 },
+    (_, i) => lower + i * step,
+  );
+  const position = (value: number) => (100 * (value - lower)) / (upper - lower);
+  const format = (value: number) =>
+    value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  const chartStyle = {
+    "--allocation-grid-step": `${100 / (ticks.length - 1)}%`,
+  } as CSSProperties;
 
   return (
-    <div className="chart-container" role="figure" aria-label={title}>
-      <div style={{ fontWeight: 600, fontSize: "0.9rem", marginBottom: "0.75rem" }}>
-        {title}
+    <figure className="allocation-chart" aria-label={title} style={chartStyle}>
+      <figcaption>{title}</figcaption>
+      <div className="allocation-axis" aria-hidden="true">
+        <div>
+          {ticks.map((tick) => (
+            <span key={tick}>{format(tick)}</span>
+          ))}
+        </div>
       </div>
-      <div style={{ overflowX: "auto" }}>
-        <svg
-          viewBox={`0 0 ${chartWidth} ${chartHeight}`}
-          width="100%"
-          style={{ maxWidth: `${chartWidth}px`, display: "block" }}
-        >
-          {items.map((item, idx) => {
-            const y = idx * 48 + 16;
-            const barWidth = Math.max((item.value / maxValue) * barAreaWidth, 2);
-            const fill = item.color || "#0284c7";
-
-            return (
-              <g key={item.label}>
-                <text
-                  x={labelWidth - 10}
-                  y={y + 15}
-                  textAnchor="end"
-                  fill="currentColor"
-                  fontSize="12"
-                  fontFamily="inherit"
-                >
-                  {item.label}
-                </text>
-                <rect
-                  x={labelWidth}
-                  y={y}
-                  width={barWidth}
-                  height={barHeight}
-                  fill={fill}
-                  rx="3"
-                />
-                <text
-                  x={labelWidth + barWidth + 8}
-                  y={y + 15}
-                  textAnchor="start"
-                  fill="currentColor"
-                  fontSize="11"
-                  fontFamily="var(--font-mono)"
-                >
-                  {item.value.toLocaleString(undefined, { maximumFractionDigits: 1 })}{" "}
-                  {unit}
-                </text>
-                {item.sublabel && (
-                  <text
-                    x={labelWidth}
-                    y={y + barHeight + 10}
-                    fill="var(--text-muted)"
-                    fontSize="10"
-                  >
-                    {item.sublabel}
-                  </text>
-                )}
-              </g>
-            );
-          })}
-        </svg>
-      </div>
-    </div>
+      {items.map((item) => {
+        const bar = (
+          <>
+            <span className="allocation-label">{item.label}</span>
+            <span className="allocation-track" aria-hidden="true">
+              <span
+                style={{
+                  left: `${position(Math.min(0, item.value))}%`,
+                  width: `${(100 * Math.abs(item.value)) / (upper - lower)}%`,
+                  backgroundColor: item.color ?? "var(--muted)",
+                }}
+              />
+            </span>
+            <span className="allocation-number">
+              {format(item.value)}
+              {unit === "%" ? unit : ` ${unit}`}
+              {item.sublabel && <ChevronDown size={13} aria-hidden="true" />}
+            </span>
+          </>
+        );
+        return item.sublabel ? (
+          <details className="allocation-item" key={item.label}>
+            <summary className="allocation-row">{bar}</summary>
+            <p>{item.sublabel}</p>
+          </details>
+        ) : (
+          <div className="allocation-row" key={item.label}>
+            {bar}
+          </div>
+        );
+      })}
+    </figure>
   );
-};
+}

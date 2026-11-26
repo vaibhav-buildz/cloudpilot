@@ -7,61 +7,64 @@ export interface LimitsResponse {
 }
 
 export interface MethodMetrics {
-  margin: number | null;
+  margin_value: number | null;
+  margin_type: string | null;
   is_feasible: boolean;
-  pooled_violation: number;
-  pooled_savings: number;
-  mean_utilization: number;
-  mean_wastage: number;
+  violation_rate: number;
+  savings: number;
+  utilization: number;
+  wastage: number;
 }
 
 export interface HypothesisVerdict {
-  supported: boolean;
-  effect_pp: number;
+  hypothesis: string;
+  verdict: string;
+  estimate: number;
   ci_lower: number;
   ci_upper: number;
-  note: string;
+  p_value: number;
 }
 
 export interface SplitComparison {
-  comparator_name: string;
-  is_gbr_feasible: boolean;
-  metrics: Record<string, MethodMetrics>;
-  h1: HypothesisVerdict;
-  h2: HypothesisVerdict;
-  h3: HypothesisVerdict;
-  evaluation_rows: number;
+  comparator: string;
+  comparator_is_feasible: boolean;
+  methods: Record<string, MethodMetrics>;
 }
 
 export interface SimulationResponse {
-  id?: string;
-  workload_info: {
+  run_id?: string;
+  saved?: boolean;
+  disclaimer: string;
+  execution_time_seconds: number;
+  parameters: {
+    seed: number;
     n_services: number;
     n_steps: number;
     target_violation: number;
-    source?: string;
   };
-  time_split: SplitComparison;
-  service_split?: SplitComparison;
-  created_at?: string;
+  time_split: SplitComparison & { h1: HypothesisVerdict };
+  service_split: SplitComparison & { h2: HypothesisVerdict };
+  h3: {
+    hypothesis: string;
+    verdict: string;
+    test_violation_time: number;
+    test_violation_service: number;
+    threshold: number;
+  };
 }
 
-export interface RunSummary {
+export interface SavedRun {
   id: string;
   created_at: string;
-  client_id: string;
-  n_services: number;
-  n_steps: number;
-  target_violation: number;
-  time_comparator: string;
-  time_h1_verdict: boolean;
-  service_comparator?: string | null;
-  service_h1_verdict?: boolean | null;
-}
-
-export interface RunsListResponse {
-  runs: RunSummary[];
-  total: number;
-  limit: number;
-  offset: number;
+  source: "simulated" | "csv";
+  params: {
+    n_services?: number;
+    n_steps?: number;
+    target_violation?: number;
+    seed?: number;
+  };
+  status: "ok" | "error";
+  result: SimulationResponse | null;
+  duration_ms: number | null;
+  error: string | null;
 }

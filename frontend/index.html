@@ -3,7 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>CloudPilot - ML-Based CPU Allocation</title>
+    <meta name="theme-color" content="#000000" />
+    <link rel="icon" type="image/svg+xml" href="/cloudpilot.svg" />
+    <title>Research overview · CloudPilot</title>
+    <script>
+      try {
+        if (localStorage.getItem("cloudpilot-theme") === "light")
+          document.documentElement.dataset.theme = "light";
+      } catch { /* Dark is the default in private browsing. */ }
+    </script>
     <meta
       name="description"
       content="ML-based CPU resource allocation for cloud workloads. Research dashboard and interactive simulator."

@@ -1,270 +1,258 @@
-import React, { useEffect, useRef, useState } from "react";
-import { getLimits, runSimulation, ApiError } from "../api/client";
-import { LimitsResponse, SimulationResponse } from "../types/api";
-import { DisclaimerBanner } from "../components/DisclaimerBanner";
+import {
+  Braces,
+  Check,
+  FlaskConical,
+  Layers2,
+  Layers3,
+  SlidersHorizontal,
+} from "lucide-react";
+import { useState, type FormEvent } from "react";
+import { runSimulation } from "../api/client";
+import { NumberField, RunActions } from "../components/ExperimentControls";
 import { SimulationResultView } from "../components/SimulationResultView";
+import {
+  MIN_SERVICES,
+  MIN_STEPS,
+  TARGET_ERROR,
+  TARGET_MAX,
+  TARGET_MIN,
+  useExperiment,
+  useLimits,
+} from "./useExperiment";
+import "./experiments.css";
 
-const MIN_SERVICES = 3;
-const MIN_STEPS = 482;
+export function SimulatePage() {
+  const { limits, usingFallback } = useLimits();
+  const experiment = useExperiment();
+  const [services, setServices] = useState("20");
+  const [steps, setSteps] = useState("600");
+  const [seed, setSeed] = useState("42");
+  const [target, setTarget] = useState("0.01");
+  const [invalidField, setInvalidField] = useState("");
 
-export const SimulatePage: React.FC = () => {
-  const [limits, setLimits] = useState<LimitsResponse>({
-    max_services: 50,
-    max_steps: 1000,
-    max_csv_bytes: 5242880,
-    timeout_seconds: 60,
-    history_limit: 100,
-  });
-
-  const [nServices, setNServices] = useState(20);
-  const [nSteps, setNSteps] = useState(600);
-  const [seed, setSeed] = useState(42);
-  const [targetViolation, setTargetViolation] = useState(0.01);
-
-  const [isLoading, setIsLoading] = useState(false);
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [result, setResult] = useState<SimulationResponse | null>(null);
-
-  const abortControllerRef = useRef<AbortController | null>(null);
-  const timerRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    getLimits()
-      .then((data) => setLimits(data))
-      .catch((_) => {
-        // Fallback limits are active
-      });
-  }, []);
-
-  const handlePreset = (services: number, steps: number) => {
-    setNServices(Math.min(services, limits.max_services));
-    setNSteps(Math.min(steps, limits.max_steps));
-    setErrorMsg(null);
+  const payload = {
+    n_services: Number(services),
+    n_steps: Number(steps),
+    seed: Number(seed),
+    target_violation: Number(target),
   };
+  const presets = [
+    { name: "Small", services: 5, steps: 600, icon: Layers2 },
+    { name: "Medium", services: 20, steps: 864, icon: Layers3 },
+  ];
 
-  const validate = (): string | null => {
-    if (nServices < MIN_SERVICES || nServices > limits.max_services) {
-      return `Services count must be between ${MIN_SERVICES} and ${limits.max_services}.`;
-    }
-    if (nSteps < MIN_STEPS || nSteps > limits.max_steps) {
-      return `Steps count must be between ${MIN_STEPS} and ${limits.max_steps}.`;
-    }
-    if (seed < 0 || !Number.isInteger(seed)) {
-      return "Seed must be a non-negative integer.";
-    }
-    if (targetViolation <= 0 || targetViolation >= 1) {
-      return "Target violation rate must be between 0 and 1 (exclusive).";
-    }
-    return null;
-  };
-
-  const handleRun = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const validationError = validate();
-    if (validationError) {
-      setErrorMsg(validationError);
+  function run(event: FormEvent) {
+    event.preventDefault();
+    const checks = [
+      {
+        id: "n-services",
+        valid:
+          Number.isInteger(payload.n_services) &&
+          payload.n_services >= MIN_SERVICES &&
+          payload.n_services <= limits.max_services,
+        message: `Services count must be between ${MIN_SERVICES} and ${limits.max_services} (whole numbers).`,
+      },
+      {
+        id: "n-steps",
+        valid:
+          Number.isInteger(payload.n_steps) &&
+          payload.n_steps >= MIN_STEPS &&
+          payload.n_steps <= limits.max_steps,
+        message: `Steps count must be between ${MIN_STEPS} and ${limits.max_steps} (whole numbers).`,
+      },
+      {
+        id: "seed",
+        valid:
+          seed !== "" &&
+          Number.isSafeInteger(payload.seed) &&
+          payload.seed >= 0,
+        message: "Seed must be a non-negative integer.",
+      },
+      {
+        id: "target-violation",
+        valid:
+          payload.target_violation >= TARGET_MIN &&
+          payload.target_violation <= TARGET_MAX,
+        message: TARGET_ERROR,
+      },
+    ];
+    const invalid = checks.find((check) => !check.valid);
+    if (invalid) {
+      setInvalidField(invalid.id);
+      experiment.setError(invalid.message);
+      document.getElementById(invalid.id)?.focus();
       return;
     }
+    setInvalidField("");
+    void experiment.execute((signal) => runSimulation(payload, signal));
+  }
 
-    setErrorMsg(null);
-    setResult(null);
-    setIsLoading(true);
-    setElapsedSeconds(0);
-
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
-
-    const startTime = Date.now();
-    timerRef.current = window.setInterval(() => {
-      setElapsedSeconds(Math.floor((Date.now() - startTime) / 1000));
-    }, 1000);
-
-    try {
-      const data = await runSimulation(
-        {
-          n_services: nServices,
-          n_steps: nSteps,
-          seed,
-          target_violation: targetViolation,
-        },
-        controller.signal
-      );
-      setResult(data);
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        if (err.status === 401) {
-          setErrorMsg("Proxy key missing or authentication failed.");
-        } else if (err.status === 429) {
-          setErrorMsg(
-            err.retryAfter
-              ? `Rate limit reached. Try again in ${err.retryAfter}s.`
-              : "Rate limit reached. Please wait a moment."
-          );
-        } else if (err.status === 504) {
-          setErrorMsg("Simulation timed out. Try smaller parameters.");
-        } else if (err.status === 499) {
-          setErrorMsg("Simulation cancelled by user.");
-        } else {
-          setErrorMsg(err.message || "Simulation failed.");
-        }
-      } else {
-        setErrorMsg("Backend unavailable. Please verify connection.");
-      }
-    } finally {
-      setIsLoading(false);
-      if (timerRef.current !== null) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-      abortControllerRef.current = null;
-    }
-  };
-
-  const handleCancel = () => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
-  };
+  function clearValidation() {
+    setInvalidField("");
+    experiment.setError("");
+  }
 
   return (
-    <div className="simulate-page">
-      <DisclaimerBanner />
-
-      <section className="card">
-        <h1 className="card-title" style={{ fontSize: "1.4rem" }}>
-          Run Synthetic Simulation
-        </h1>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.95rem", marginBottom: "1rem" }}>
-          Configure simulated synthetic workloads to evaluate margin selection and
-          comparisons across models on the fly.
+    <div className="exp-page">
+      <header className="exp-title">
+        <h1>Simulation</h1>
+        <p>
+          Generate a seeded workload and compare CPU allocation policies on
+          held-out data.
         </p>
-
-        {/* Presets */}
-        <div className="preset-buttons">
-          <span style={{ fontSize: "0.875rem", alignSelf: "center", fontWeight: 500 }}>
-            Quick Presets:
-          </span>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={() => handlePreset(5, 600)}
-            disabled={isLoading}
-          >
-            Small (5 svc, 600 steps)
-          </button>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={() => handlePreset(20, 864)}
-            disabled={isLoading}
-          >
-            Medium (20 svc, 3 days)
-          </button>
-        </div>
-
-        <form onSubmit={handleRun} noValidate>
-          <div className="grid-2">
-            <div className="form-group">
-              <label htmlFor="n-services" className="form-label">
-                Number of Services (max: {limits.max_services})
-              </label>
-              <input
+      </header>
+      <div className="exp-workspace">
+        <form
+          noValidate
+          onSubmit={run}
+          className="exp-panel"
+          onChange={clearValidation}
+        >
+          <header className="exp-panel-heading">
+            <SlidersHorizontal aria-hidden="true" />
+            <h2>Experiment configuration</h2>
+          </header>
+          <fieldset className="exp-section" disabled={experiment.loading}>
+            <legend className="sr-only">
+              Synthetic workload configuration
+            </legend>
+            <h3>Workload preset</h3>
+            <div className="exp-presets">
+              {presets.map(
+                ({ name, services: size, steps: length, icon: Icon }) => {
+                  const cappedServices = Math.min(size, limits.max_services);
+                  const cappedSteps = Math.min(length, limits.max_steps);
+                  const active =
+                    payload.n_services === cappedServices &&
+                    payload.n_steps === cappedSteps;
+                  return (
+                    <button
+                      key={name}
+                      className="exp-preset"
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => {
+                        setServices(String(cappedServices));
+                        setSteps(String(cappedSteps));
+                        clearValidation();
+                      }}
+                    >
+                      <span>
+                        <Icon size={16} aria-hidden="true" />
+                        {name}
+                        {active && (
+                          <Check
+                            className="exp-selected"
+                            size={14}
+                            aria-hidden="true"
+                          />
+                        )}
+                      </span>
+                      <small>
+                        {cappedServices} services · {cappedSteps} steps
+                      </small>
+                    </button>
+                  );
+                },
+              )}
+            </div>
+            <div className="exp-fields">
+              <NumberField
                 id="n-services"
-                type="number"
-                className="form-input"
+                label="Number of services"
+                hint={`${MIN_SERVICES}–${limits.max_services} independent services`}
                 min={MIN_SERVICES}
                 max={limits.max_services}
-                value={nServices}
-                onChange={(e) => setNServices(parseInt(e.target.value, 10) || 0)}
-                disabled={isLoading}
-                required
+                value={services}
+                onChange={setServices}
+                invalid={invalidField === "n-services"}
               />
-              <div className="form-help">Synthetic services generated per workload</div>
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="n-steps" className="form-label">
-                Time Steps (5-min intervals, max: {limits.max_steps})
-              </label>
-              <input
+              <NumberField
                 id="n-steps"
-                type="number"
-                className="form-input"
+                label="Time steps"
+                hint={`${MIN_STEPS}–${limits.max_steps.toLocaleString()} five-minute intervals`}
                 min={MIN_STEPS}
                 max={limits.max_steps}
-                value={nSteps}
-                onChange={(e) => setNSteps(parseInt(e.target.value, 10) || 0)}
-                disabled={isLoading}
-                required
+                value={steps}
+                onChange={setSteps}
+                invalid={invalidField === "n-steps"}
               />
-              <div className="form-help">At least {MIN_STEPS} steps, including 288 for feature history</div>
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="seed" className="form-label">
-                Random Seed
-              </label>
-              <input
+              <NumberField
                 id="seed"
-                type="number"
-                className="form-input"
+                label="Random seed"
+                hint="Reproduces the same synthetic trace"
+                min={0}
                 value={seed}
-                onChange={(e) => setSeed(parseInt(e.target.value, 10) || 0)}
-                disabled={isLoading}
-                required
+                onChange={setSeed}
+                invalid={invalidField === "seed"}
               />
-              <div className="form-help">Deterministic workload generation seed</div>
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="target-violation" className="form-label">
-                Target Violation Rate (SLA threshold)
-              </label>
-              <input
+              <NumberField
                 id="target-violation"
-                type="number"
-                step="0.001"
-                min="0.001"
-                max="0.5"
-                className="form-input"
-                value={targetViolation}
-                onChange={(e) => setTargetViolation(parseFloat(e.target.value) || 0.01)}
-                disabled={isLoading}
-                required
+                label="Target violation rate"
+                hint="0.005–0.05 · 0.01 equals 1%"
+                min={TARGET_MIN}
+                max={TARGET_MAX}
+                step="any"
+                value={target}
+                onChange={setTarget}
+                invalid={invalidField === "target-violation"}
               />
-              <div className="form-help">Default 0.01 = 1% SLA violation limit</div>
             </div>
-          </div>
-
-          {errorMsg && (
-            <div className="alert alert-error" role="alert">
-              {errorMsg}
-            </div>
-          )}
-
-          <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
-            <button
-              type="submit"
-              className="btn btn-primary"
-              disabled={isLoading}
-            >
-              {isLoading ? `Running Simulation... (${elapsedSeconds}s)` : "Run Simulation"}
-            </button>
-            {isLoading && (
-              <button
-                type="button"
-                className="btn btn-danger"
-                onClick={handleCancel}
-              >
-                Cancel
-              </button>
+            {usingFallback && (
+              <p className="exp-note">
+                Server limits are unavailable. Default workload limits are
+                shown.
+              </p>
             )}
-          </div>
+          </fieldset>
+          <RunActions
+            loading={experiment.loading}
+            elapsed={experiment.elapsed}
+            onCancel={experiment.cancel}
+            error={experiment.error}
+            action="Run simulation"
+            busyLabel="Running simulation"
+          />
         </form>
-      </section>
-
-      {result && <SimulationResultView result={result} />}
+        <aside className="exp-panel exp-aside" aria-label="Experiment preview">
+          <header className="exp-panel-heading">
+            <Braces aria-hidden="true" />
+            <h2>Request preview</h2>
+          </header>
+          <div className="exp-section">
+            <div className="exp-endpoint">
+              <span>POST</span>
+              <code>/api/simulate</code>
+            </div>
+            <pre className="exp-code" aria-label="Configured request payload">
+              <code>
+                {JSON.stringify(
+                  {
+                    n_services: services === "" ? null : payload.n_services,
+                    n_steps: steps === "" ? null : payload.n_steps,
+                    seed: seed === "" ? null : payload.seed,
+                    target_violation:
+                      target === "" ? null : payload.target_violation,
+                  },
+                  null,
+                  2,
+                )}
+              </code>
+            </pre>
+            <div className="exp-aside-note">
+              <FlaskConical size={16} aria-hidden="true" />
+              <p>
+                Each run trains and evaluates policies on two holdouts: future
+                intervals and unseen services. Results describe simulated CPU
+                allocation.
+              </p>
+            </div>
+          </div>
+        </aside>
+      </div>
+      {experiment.result && (
+        <SimulationResultView result={experiment.result} source="simulated" />
+      )}
     </div>
   );
-};
+}

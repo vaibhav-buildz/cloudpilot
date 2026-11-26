@@ -15,7 +15,7 @@ describe("OverviewPage", () => {
     expect(
       screen.getByText(/Simulated results. Does not reflect real cloud workloads/i)
     ).toBeInTheDocument();
-    expect(screen.getByText(/CloudPilot: ML-Based CPU Allocation Research/i)).toBeInTheDocument();
+    expect(screen.getByText(/Research overview/i)).toBeInTheDocument();
     expect(screen.getByText(/Methodology/i)).toBeInTheDocument();
 
     const studyLink = screen.getByRole("link", { name: /View Study Findings/i });

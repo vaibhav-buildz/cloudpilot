@@ -1,70 +1,143 @@
-import React from "react";
+﻿import {
+  Activity,
+  BookOpen,
+  Check,
+  Cpu,
+  FlaskConical,
+  Layers,
+  Minus,
+  Server,
+  ShieldCheck,
+  Upload,
+} from "lucide-react";
 import { Link } from "react-router-dom";
+import study from "../data/study_summary.json";
+import { AllocationDiagram } from "../components/AllocationDiagram";
+import { BenchmarkChart } from "../components/BenchmarkChart";
 import { DisclaimerBanner } from "../components/DisclaimerBanner";
+import "./overview.css";
 
-export const OverviewPage: React.FC = () => {
+export function OverviewPage() {
+  const model = study.methods_summary_time.find((m) => m.name === "GBR_q95")!;
+  const metrics = [
+    {
+      name: "CPU savings",
+      value: model.savings_pct.toFixed(2) + "%",
+      note: "GBR_q95 vs. static · time split",
+      icon: Cpu,
+    },
+    {
+      name: "Test violation rate",
+      value: model.violation_pct.toFixed(2) + "%",
+      note: "GBR_q95 mean · time split",
+      icon: Activity,
+    },
+    {
+      name: "Simulated services",
+      value: study.config.n_services,
+      note: "Per seeded workload",
+      icon: Server,
+    },
+    {
+      name: "Allocation policies",
+      value: study.methods_summary_time.length,
+      note: "Across " + study.config.seeds.length + " benchmark seeds",
+      icon: Layers,
+    },
+  ];
   return (
     <div className="overview-page">
-      <DisclaimerBanner />
-
-      <section className="card">
-        <h1 className="card-title" style={{ fontSize: "1.5rem" }}>
-          CloudPilot: ML-Based CPU Allocation Research
-        </h1>
-        <p style={{ marginTop: "0.5rem", color: "var(--text-muted)", fontSize: "1rem" }}>
-          CloudPilot is an experimental right-sizing framework exploring whether
-          machine learning models can safely reduce CPU allocation overhead for
-          cloud services compared to robust rolling statistical baselines.
-        </p>
-      </section>
-
-      <section className="card">
-        <h2 className="card-title">Methodology</h2>
-        <p style={{ lineHeight: 1.6 }}>
-          CPU demand is evaluated across discrete 5-minute sampling intervals under
-          stringent SLA constraints (pooled violation rate target of 1% or less).
-          Workloads undergo dual validation schemes: a <strong>TIME split</strong>{" "}
-          (evaluating future held-out time windows on observed services) and a{" "}
-          <strong>SERVICE split</strong> (evaluating completely unseen services).
-          Candidate methods include fixed static reservations, rolling statistical
-          heuristics (EWMA, rolling 99th percentile, rolling maximum), and
-          supervised learning models (Linear Regression, Decision Tree, Random
-          Forest, Gradient Boosting, and quantile regression GBR_q95). Every policy
-          selects a safety margin on a validation grid; only policies meeting the
-          validation target qualify as feasible comparators on the test set.
-        </p>
-      </section>
-
-      <div className="grid-2">
-        <div className="card">
-          <h2 className="card-title">Benchmark Study Findings</h2>
-          <p style={{ color: "var(--text-muted)", marginBottom: "1rem" }}>
-            Review the 10-seed pre-registered study evaluating hypotheses H1
-            (temporal generalization), H2 (cross-service transfer), and H3 (SLA
-            safety bounds).
+      <section className="overview-hero">
+        <div>
+          <small className="study-label">
+            <i />
+            PRE-REGISTERED BENCHMARK
+          </small>
+          <h1>Research overview</h1>
+          <p>
+            Explore CPU allocation policies, compare benchmark results, and run
+            reproducible cloud workload experiments.
           </p>
-          <Link to="/study" className="btn btn-primary">
-            View Study Findings
-          </Link>
-        </div>
-
-        <div className="card">
-          <h2 className="card-title">Interactive Simulator</h2>
-          <p style={{ color: "var(--text-muted)", marginBottom: "1rem" }}>
-            Execute custom simulations with parameterized service counts, time
-            horizons, and target violation constraints, or upload custom workload
-            CSVs.
-          </p>
-          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-            <Link to="/simulate" className="btn btn-primary">
-              Run Simulation
+          <div className="overview-actions">
+            <Link className="btn btn-primary" to="/simulate">
+              <FlaskConical size={16} />
+              Run simulation
             </Link>
-            <Link to="/upload" className="btn btn-secondary">
-              Upload Workload CSV
+            <Link className="btn btn-secondary" to="/upload">
+              <Upload size={16} />
+              Upload CSV
             </Link>
           </div>
         </div>
+        <AllocationDiagram />
+      </section>
+      <div className="overview-metrics">
+        {metrics.map(({ name, value, note, icon: Icon }) => (
+          <div key={name}>
+            <span>
+              <Icon size={15} />
+              {name}
+            </span>
+            <strong>{value}</strong>
+            <small>{note}</small>
+          </div>
+        ))}
       </div>
+      <div className="overview-panels">
+        <BenchmarkChart />
+        <section className="overview-panel hypotheses">
+          <div className="overview-panel-head">
+            <div>
+              <h2>
+                <ShieldCheck size={18} />
+                Hypothesis summary
+              </h2>
+              <p>Pre-registered study outcomes</p>
+            </div>
+          </div>
+          {(["h1", "h2", "h3"] as const).map((key, i) => {
+            const h = study.headline[key],
+              supported = h.verdict === "SUPPORTED";
+            return (
+              <div className="hyp-row" key={key}>
+                <code>{key.toUpperCase()}</code>
+                <div>
+                  <strong>
+                    {
+                      [
+                        "Temporal efficiency",
+                        "Cross-service transfer",
+                        "Safety bound",
+                      ][i]
+                    }
+                  </strong>
+                  <small>
+                    {h.support_count}/{h.total_seeds} seeds supported
+                  </small>
+                </div>
+                <span className={supported ? "positive" : ""}>
+                  {supported ? <Check size={12} /> : <Minus size={12} />}
+                  {supported ? "Supported" : "Unsupported"}
+                </span>
+              </div>
+            );
+          })}
+          <Link className="study-link" to="/study">
+            <BookOpen size={15} />
+            View study findings
+          </Link>
+        </section>
+      </div>
+      <section className="overview-method">
+        <h2>Methodology</h2>
+        <p>
+          CloudPilot compares past-only CPU allocation policies on synthetic
+          workloads sampled every five minutes. Safety margins are selected on
+          validation data. Held-out time windows and unseen services measure how
+          well each policy generalizes.
+        </p>
+      </section>
+      <DisclaimerBanner />
     </div>
   );
-};
+}

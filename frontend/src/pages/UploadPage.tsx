@@ -1,252 +1,259 @@
-import React, { useEffect, useRef, useState } from "react";
-import { getLimits, runSimulationCsv, ApiError } from "../api/client";
-import { LimitsResponse, SimulationResponse } from "../types/api";
-import { DisclaimerBanner } from "../components/DisclaimerBanner";
+import {
+  Braces,
+  FileSpreadsheet,
+  FileUp,
+  FolderOpen,
+  Upload,
+  X,
+} from "lucide-react";
+import { useRef, useState, type DragEvent, type FormEvent } from "react";
+import { runSimulationCsv } from "../api/client";
+import { NumberField, RunActions } from "../components/ExperimentControls";
 import { SimulationResultView } from "../components/SimulationResultView";
+import {
+  MIN_SERVICES,
+  MIN_STEPS,
+  TARGET_ERROR,
+  TARGET_MAX,
+  TARGET_MIN,
+  useExperiment,
+  useLimits,
+} from "./useExperiment";
+import "./experiments.css";
 
-export const UploadPage: React.FC = () => {
-  const [limits, setLimits] = useState<LimitsResponse>({
-    max_services: 50,
-    max_steps: 1000,
-    max_csv_bytes: 5242880,
-    timeout_seconds: 60,
-    history_limit: 100,
-  });
+const example = `service_id,timestamp,cpu_demand
+api,2026-01-01T00:00Z,0.42
+api,2026-01-01T00:05Z,0.38`;
 
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [targetViolation, setTargetViolation] = useState(0.01);
+export function UploadPage() {
+  const { limits, usingFallback } = useLimits();
+  const experiment = useExperiment();
+  const [file, setFile] = useState<File | null>(null);
+  const [target, setTarget] = useState("0.01");
+  const [dragging, setDragging] = useState(false);
+  const [fraction, setFraction] = useState<number | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const maxSize = (limits.max_csv_bytes / (1024 * 1024)).toFixed(1);
 
-  const [isLoading, setIsLoading] = useState(false);
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [result, setResult] = useState<SimulationResponse | null>(null);
+  function selectFile(files: FileList | null) {
+    if (experiment.loading || !files?.length) return;
+    const candidate = files[0];
+    let error = "";
+    if (files.length > 1) error = "Choose one CSV file per experiment.";
+    else if (candidate.size > limits.max_csv_bytes)
+      error = `File size exceeds maximum allowed limit of ${maxSize} MB.`;
+    else if (!candidate.size)
+      error = "This file is empty. Choose a CSV with workload rows.";
+    experiment.setError(error);
+    setFile(error ? null : candidate);
+    if (fileInput.current) fileInput.current.value = "";
+  }
 
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
-  const timerRef = useRef<number | null>(null);
+  function drop(event: DragEvent) {
+    event.preventDefault();
+    setDragging(false);
+    selectFile(event.dataTransfer.files);
+  }
 
-  useEffect(() => {
-    getLimits()
-      .then((data) => setLimits(data))
-      .catch((_) => {
-        // Fallback limits
-      });
-  }, []);
-
-  const handleFileChange = (file: File | null) => {
-    setErrorMsg(null);
+  function upload(event: FormEvent) {
+    event.preventDefault();
     if (!file) {
-      setSelectedFile(null);
+      experiment.setError("Choose a CSV workload file.");
       return;
     }
-
     if (file.size > limits.max_csv_bytes) {
-      setErrorMsg(
-        `File size (${(file.size / (1024 * 1024)).toFixed(2)} MB) exceeds maximum allowed limit of ${(
-          limits.max_csv_bytes /
-          (1024 * 1024)
-        ).toFixed(1)} MB.`
+      experiment.setError(
+        `File size exceeds maximum allowed limit of ${maxSize} MB.`,
       );
-      setSelectedFile(null);
-      if (fileInputRef.current) fileInputRef.current.value = "";
       return;
     }
-
-    setSelectedFile(file);
-  };
-
-  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      handleFileChange(e.dataTransfer.files[0]);
-    }
-  };
-
-  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-  };
-
-  const handleUploadSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedFile) {
-      setErrorMsg("Please select a valid CSV workload file.");
+    const rate = Number(target);
+    if (!(rate >= TARGET_MIN && rate <= TARGET_MAX)) {
+      experiment.setError(TARGET_ERROR);
+      document.getElementById("target-violation-csv")?.focus();
       return;
     }
+    setFraction(null);
+    void experiment.execute((signal) =>
+      runSimulationCsv(file, rate, signal, setFraction),
+    );
+  }
 
-    if (targetViolation <= 0 || targetViolation >= 1) {
-      setErrorMsg("Target violation must be between 0 and 1.");
-      return;
-    }
-
-    setErrorMsg(null);
-    setResult(null);
-    setIsLoading(true);
-    setElapsedSeconds(0);
-
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
-
-    const startTime = Date.now();
-    timerRef.current = window.setInterval(() => {
-      setElapsedSeconds(Math.floor((Date.now() - startTime) / 1000));
-    }, 1000);
-
-    try {
-      const data = await runSimulationCsv(
-        selectedFile,
-        targetViolation,
-        controller.signal
-      );
-      setResult(data);
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        if (err.status === 401) {
-          setErrorMsg("Proxy key missing or authentication failed.");
-        } else if (err.status === 429) {
-          setErrorMsg(
-            err.retryAfter
-              ? `Rate limit reached. Try again in ${err.retryAfter}s.`
-              : "Rate limit reached. Please wait a moment."
-          );
-        } else if (err.status === 504) {
-          setErrorMsg("Simulation timed out on backend.");
-        } else if (err.status === 499) {
-          setErrorMsg("Upload evaluation cancelled.");
-        } else {
-          setErrorMsg(err.message || "Evaluation failed.");
-        }
-      } else {
-        setErrorMsg("Backend unavailable. Please verify connection.");
-      }
-    } finally {
-      setIsLoading(false);
-      if (timerRef.current !== null) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-      abortControllerRef.current = null;
-    }
-  };
-
-  const handleCancel = () => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
-  };
-
+  const uploadComplete = fraction === 1;
   return (
-    <div className="upload-page">
-      <DisclaimerBanner />
-
-      <section className="card">
-        <h1 className="card-title" style={{ fontSize: "1.4rem" }}>
-          Upload Workload CSV
-        </h1>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.95rem", marginBottom: "1rem" }}>
-          Upload your own workload trace to test machine learning and baseline
-          right-sizing algorithms.
+    <div className="exp-page">
+      <header className="exp-title">
+        <h1>CSV upload</h1>
+        <p>
+          Replay a workload trace to evaluate CPU allocation on your own service
+          data.
         </p>
-
-        <div className="card" style={{ backgroundColor: "var(--neutral-bg)" }}>
-          <h2 style={{ fontSize: "0.9rem", fontWeight: 600, marginBottom: "0.25rem" }}>
-            Expected CSV Format
-          </h2>
-          <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>
-            The CSV file must include headers for <code>service_id</code>,{" "}
-            <code>timestamp</code> (ISO-8601 or integer step), and <code>cpu_demand</code>:
-          </p>
-          <pre className="code-block">
-{`service_id,timestamp,cpu_demand
-svc_1,2026-01-01T00:00:00Z,0.42
-svc_1,2026-01-01T00:05:00Z,0.38`}
-          </pre>
-          <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
-            At least 3 services and 482 steps per service. Maximum file size:{" "}
-            {(limits.max_csv_bytes / (1024 * 1024)).toFixed(1)} MB.
-          </p>
-        </div>
-
-        <form onSubmit={handleUploadSubmit} noValidate>
-          <div
-            onDrop={handleDrop}
-            onDragOver={handleDragOver}
-            style={{
-              border: "2px dashed var(--border)",
-              borderRadius: "var(--radius-md)",
-              padding: "2rem 1rem",
-              textAlign: "center",
-              marginBottom: "1rem",
-              backgroundColor: "var(--surface-raised)",
-              cursor: "pointer",
-            }}
-            onClick={() => fileInputRef.current?.click()}
-          >
+      </header>
+      <div className="exp-workspace">
+        <form noValidate onSubmit={upload} className="exp-panel">
+          <header className="exp-panel-heading">
+            <FileUp aria-hidden="true" />
+            <h2>Workload file</h2>
+          </header>
+          <fieldset className="exp-section" disabled={experiment.loading}>
+            <legend className="sr-only">CSV workload configuration</legend>
             <input
+              ref={fileInput}
               type="file"
-              ref={fileInputRef}
+              aria-label="CSV workload file"
               accept=".csv,text/csv"
-              style={{ display: "none" }}
-              onChange={(e) => handleFileChange(e.target.files?.[0] || null)}
-              disabled={isLoading}
+              hidden
+              onChange={(e) => selectFile(e.target.files)}
             />
-            <div style={{ fontWeight: 600, marginBottom: "0.25rem" }}>
-              {selectedFile ? selectedFile.name : "Choose CSV or drag and drop here"}
-            </div>
-            <div style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
-              {selectedFile
-                ? `${(selectedFile.size / 1024).toFixed(1)} KB selected`
-                : `Accepts standard CSV up to ${(limits.max_csv_bytes / (1024 * 1024)).toFixed(1)} MB`}
-            </div>
-          </div>
-
-          <div className="form-group" style={{ maxWidth: 320 }}>
-            <label htmlFor="target-violation-csv" className="form-label">
-              Target Violation Rate (SLA threshold)
-            </label>
-            <input
-              id="target-violation-csv"
-              type="number"
-              step="0.001"
-              min="0.001"
-              max="0.5"
-              className="form-input"
-              value={targetViolation}
-              onChange={(e) => setTargetViolation(parseFloat(e.target.value) || 0.01)}
-              disabled={isLoading}
-              required
-            />
-          </div>
-
-          {errorMsg && (
-            <div className="alert alert-error" role="alert">
-              {errorMsg}
-            </div>
-          )}
-
-          <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
-            <button
-              type="submit"
-              className="btn btn-primary"
-              disabled={isLoading || !selectedFile}
+            <div
+              className="exp-dropzone"
+              data-dragging={dragging || undefined}
+              onDragOver={(e) => {
+                e.preventDefault();
+                if (!experiment.loading) setDragging(true);
+              }}
+              onDragLeave={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget as Node | null))
+                  setDragging(false);
+              }}
+              onDrop={drop}
             >
-              {isLoading
-                ? `Evaluating CSV... (${elapsedSeconds}s)`
-                : "Upload and Evaluate"}
-            </button>
-            {isLoading && (
-              <button
-                type="button"
-                className="btn btn-danger"
-                onClick={handleCancel}
-              >
-                Cancel
-              </button>
+              {file ? (
+                <FileSpreadsheet
+                  className="exp-drop-icon"
+                  size={28}
+                  aria-hidden="true"
+                />
+              ) : (
+                <Upload
+                  className="exp-drop-icon"
+                  size={28}
+                  aria-hidden="true"
+                />
+              )}
+              <strong>{file ? file.name : "Drop your CSV here"}</strong>
+              <small>
+                {file
+                  ? `${file.size.toLocaleString()} bytes selected`
+                  : `UTF-8 CSV · Up to ${maxSize} MB`}
+              </small>
+              <div className="exp-file-actions">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => fileInput.current?.click()}
+                >
+                  <FolderOpen size={15} aria-hidden="true" />
+                  {file ? "Change file" : "Choose file"}
+                </button>
+                {file && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    aria-label="Remove selected file"
+                    onClick={() => {
+                      setFile(null);
+                      experiment.setError("");
+                    }}
+                  >
+                    <X size={15} aria-hidden="true" />
+                  </button>
+                )}
+              </div>
+            </div>
+            <NumberField
+              id="target-violation-csv"
+              label="Target violation rate"
+              hint="0.005–0.05 · 0.01 equals 1%"
+              min={TARGET_MIN}
+              max={TARGET_MAX}
+              step="any"
+              value={target}
+              onChange={(value) => {
+                setTarget(value);
+                experiment.setError("");
+              }}
+              invalid={experiment.error === TARGET_ERROR}
+            />
+            {experiment.loading && (
+              <div className="exp-transfer">
+                <div>
+                  <span role="status">
+                    {uploadComplete
+                      ? "Upload complete · awaiting evaluation"
+                      : "Transferring workload"}
+                  </span>
+                  {fraction !== null && (
+                    <span>{Math.floor(fraction * 100)}%</span>
+                  )}
+                </div>
+                <progress
+                  aria-label="File transfer progress"
+                  value={fraction ?? undefined}
+                  max={1}
+                />
+              </div>
+            )}
+          </fieldset>
+          <RunActions
+            loading={experiment.loading}
+            elapsed={experiment.elapsed}
+            onCancel={experiment.cancel}
+            error={experiment.error}
+            action="Upload and evaluate"
+            busyLabel={
+              uploadComplete ? "Evaluating workload" : "Uploading workload"
+            }
+            icon={<Upload size={15} aria-hidden="true" />}
+            disabled={!file}
+          />
+        </form>
+        <aside className="exp-panel exp-aside" aria-label="CSV requirements">
+          <header className="exp-panel-heading">
+            <Braces aria-hidden="true" />
+            <h2>Expected CSV format</h2>
+          </header>
+          <div className="exp-section">
+            <dl className="exp-schema">
+              <div>
+                <dt>service_id</dt>
+                <dd>Service identifier</dd>
+              </div>
+              <div>
+                <dt>timestamp</dt>
+                <dd>Sortable time or zero-padded step</dd>
+              </div>
+              <div>
+                <dt>cpu_demand</dt>
+                <dd>Finite, non-negative CPU demand</dd>
+              </div>
+            </dl>
+            <pre className="exp-code">
+              <code>{example}</code>
+            </pre>
+            <h3>Trace requirements</h3>
+            <ul className="exp-requirements">
+              <li>
+                {MIN_SERVICES}–{limits.max_services} services per workload
+              </li>
+              <li>
+                {MIN_STEPS}–{limits.max_steps.toLocaleString()} steps in the
+                shortest trace
+              </li>
+              <li>Longer traces are trimmed to the shortest service trace.</li>
+            </ul>
+            {usingFallback && (
+              <p className="exp-note">
+                Server limits are unavailable. Default workload limits are
+                shown.
+              </p>
             )}
           </div>
-        </form>
-      </section>
-
-      {result && <SimulationResultView result={result} />}
+        </aside>
+      </div>
+      {experiment.result && (
+        <SimulationResultView result={experiment.result} source="csv" />
+      )}
     </div>
   );
-};
+}

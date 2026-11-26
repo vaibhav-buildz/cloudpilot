@@ -1,6 +1,6 @@
 import {
   LimitsResponse,
-  RunsListResponse,
+  SavedRun,
   SimulationResponse,
 } from "../types/api";
 
@@ -21,7 +21,11 @@ async function handleResponse<T>(res: Response): Promise<T> {
     let detail = "";
     try {
       const body = await res.json();
-      detail = body.detail || body.message || "";
+      if (Array.isArray(body.detail)) {
+        detail = body.detail.map((issue: { msg?: string }) => issue.msg).filter(Boolean).join(". ");
+      } else {
+        detail = body.detail || body.message || "";
+      }
     } catch {
       // response was not JSON
     }
@@ -109,55 +113,70 @@ export async function runSimulation(
   }
 }
 
-export async function runSimulationCsv(
+export function runSimulationCsv(
   file: File,
   targetViolation: number,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onProgress?: (fraction: number) => void
 ): Promise<SimulationResponse> {
-  try {
+  // Fetch does not expose upload byte counts. XHR uses the same same-origin proxy
+  // and browser-managed cookie as the other experiment calls.
+  return new Promise((resolve, reject) => {
+    const cancelled = () => reject(new ApiError("Request cancelled. The server may still finish this run.", 499));
+    if (signal?.aborted) {
+      cancelled();
+      return;
+    }
+    const request = new XMLHttpRequest();
+    const abort = () => request.abort();
+    signal?.addEventListener("abort", abort, { once: true });
+    request.onloadend = () => signal?.removeEventListener("abort", abort);
+    request.onabort = cancelled;
+    request.onerror = () => reject(new ApiError("Backend unavailable", 0));
+    request.ontimeout = () => reject(new ApiError("Upload request timed out.", 504));
+    request.upload.onprogress = (event) => {
+      if (event.lengthComputable && event.total > 0) onProgress?.(event.loaded / event.total);
+    };
+    request.upload.onload = () => onProgress?.(1);
+    request.onload = () => {
+      const retryAfter = request.getResponseHeader("Retry-After");
+      const response = new Response(request.responseText, {
+        status: request.status,
+        headers: retryAfter ? { "Retry-After": retryAfter } : {},
+      });
+      handleResponse<SimulationResponse>(response).then(resolve, reject);
+    };
+
+    request.open("POST", "/api/simulate/csv");
+    request.setRequestHeader("Accept", "application/json");
     const formData = new FormData();
     formData.append("file", file);
     formData.append("target_violation", targetViolation.toString());
-
-    const res = await fetch("/api/simulate/csv", {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-      },
-      body: formData,
-      signal,
-    });
-    return await handleResponse<SimulationResponse>(res);
-  } catch (err: unknown) {
-    if (err instanceof ApiError) throw err;
-    if (err instanceof DOMException && err.name === "AbortError") {
-      throw new ApiError("Simulation cancelled", 499);
-    }
-    throw new ApiError("Backend unavailable", 0);
-  }
+    request.send(formData);
+  });
 }
 
 export async function getRuns(
   limit: number = 10,
   offset: number = 0
-): Promise<RunsListResponse> {
+): Promise<SavedRun[]> {
   try {
     const res = await fetch(`/api/runs?limit=${limit}&offset=${offset}`, {
       headers: { Accept: "application/json" },
     });
-    return await handleResponse<RunsListResponse>(res);
+    return await handleResponse<SavedRun[]>(res);
   } catch (err) {
     if (err instanceof ApiError) throw err;
     throw new ApiError("Backend unavailable", 0);
   }
 }
 
-export async function getRun(id: string): Promise<SimulationResponse> {
+export async function getRun(id: string): Promise<SavedRun> {
   try {
     const res = await fetch(`/api/runs/${encodeURIComponent(id)}`, {
       headers: { Accept: "application/json" },
     });
-    return await handleResponse<SimulationResponse>(res);
+    return await handleResponse<SavedRun>(res);
   } catch (err) {
     if (err instanceof ApiError) throw err;
     throw new ApiError("Backend unavailable", 0);

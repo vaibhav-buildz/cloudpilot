@@ -1,286 +1,510 @@
-import React, { useEffect, useState, useCallback } from "react";
-import { useParams, useNavigate, Link } from "react-router-dom";
-import { getRuns, getRun, deleteRun, ApiError } from "../api/client";
-import { RunSummary, SimulationResponse } from "../types/api";
-import { DisclaimerBanner } from "../components/DisclaimerBanner";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  Link,
+  useNavigate,
+  useParams,
+  useSearchParams,
+} from "react-router-dom";
+import {
+  CheckCircle2,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  CircleAlert,
+  FileSpreadsheet,
+  History,
+  ListTree,
+  LockKeyhole,
+  Plus,
+  Timer,
+  Trash2,
+  Workflow,
+} from "lucide-react";
+import { ApiError, deleteRun, getRun, getRuns } from "../api/client";
 import { SimulationResultView } from "../components/SimulationResultView";
+import { DisclaimerBanner } from "../components/DisclaimerBanner";
+import type { SavedRun } from "../types/api";
+import "./history.css";
 
-export const HistoryPage: React.FC = () => {
-  const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
+const PAGE_SIZE = 10;
 
-  const [runs, setRuns] = useState<RunSummary[]>([]);
-  const [total, setTotal] = useState(0);
-  const [limit] = useState(10);
-  const [offset, setOffset] = useState(0);
+function historyPath(page: number, id?: string) {
+  return `/history${id ? `/${encodeURIComponent(id)}` : ""}${page > 1 ? `?page=${page}` : ""}`;
+}
 
-  const [isLoading, setIsLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+function formatDuration(milliseconds: number | null) {
+  if (milliseconds == null) return "Unrecorded";
+  if (milliseconds < 1000) return `${milliseconds} ms`;
+  if (milliseconds < 60000) return `${(milliseconds / 1000).toFixed(1)} s`;
+  const seconds = Math.floor(milliseconds / 1000);
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
 
-  // Detail view
-  const [selectedRun, setSelectedRun] = useState<SimulationResponse | null>(null);
-  const [loadingDetail, setLoadingDetail] = useState(false);
+function messageOf(error: unknown, fallback: string) {
+  return error instanceof ApiError ? error.message : fallback;
+}
 
-  // Delete modal confirmation
-  const [deleteId, setDeleteId] = useState<string | null>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
+function RunRow({
+  run,
+  expanded,
+  onToggle,
+  onDelete,
+}: {
+  run: SavedRun;
+  expanded: boolean;
+  onToggle: () => void;
+  onDelete: (run: SavedRun) => void;
+}) {
+  const { n_services, n_steps, target_violation, seed } = run.params;
+  const SourceIcon = run.source === "csv" ? FileSpreadsheet : Workflow;
+  const date = new Date(run.created_at);
+  const summary = [
+    n_services != null && `${n_services} services`,
+    n_steps != null && `${n_steps.toLocaleString()} steps`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
-  const fetchRuns = useCallback(async () => {
-    setIsLoading(true);
-    setErrorMsg(null);
+  return (
+    <li className="history-run">
+      <div className="history-row">
+        <button
+          type="button"
+          className="history-expand"
+          onClick={onToggle}
+          aria-label={`${expanded ? "Collapse" : "Expand"} run ${run.id}`}
+          aria-describedby={`identity-${run.id} status-${run.id} duration-${run.id} created-${run.id}`}
+          aria-expanded={expanded}
+          aria-controls={expanded ? `details-${run.id}` : undefined}
+        >
+          <span className="history-identity" id={`identity-${run.id}`}>
+            <span className="history-source-icon">
+              <SourceIcon size={18} aria-hidden="true" />
+            </span>
+            <span>
+              <strong>
+                {run.source === "csv" ? "CSV workload" : "Synthetic workload"}
+              </strong>
+              <span className="history-run-id">
+                {run.id.slice(0, 8)}
+                {summary && <span> · {summary}</span>}
+              </span>
+            </span>
+          </span>
+          <span className="history-status" id={`status-${run.id}`}>
+            {run.status === "ok" ? (
+              <>
+                <CheckCircle2 size={14} aria-hidden="true" /> Completed
+              </>
+            ) : (
+              <>
+                <CircleAlert size={14} aria-hidden="true" /> Failed
+              </>
+            )}
+          </span>
+          <span
+            className="history-duration"
+            title="Execution duration"
+            id={`duration-${run.id}`}
+          >
+            <Timer size={14} aria-hidden="true" />{" "}
+            {formatDuration(run.duration_ms)}
+          </span>
+          <time
+            dateTime={run.created_at}
+            title={date.toLocaleString()}
+            className="history-time"
+            id={`created-${run.id}`}
+          >
+            <span>
+              {date.toLocaleDateString(undefined, {
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+              })}
+            </span>
+            <span>
+              {date.toLocaleTimeString(undefined, {
+                hour: "numeric",
+                minute: "2-digit",
+              })}
+            </span>
+          </time>
+          <ChevronDown
+            size={15}
+            className="history-chevron"
+            aria-hidden="true"
+          />
+        </button>
+        <button
+          className="history-trash"
+          type="button"
+          aria-label={`Delete run ${run.id}`}
+          title="Delete run"
+          onClick={() => onDelete(run)}
+        >
+          <Trash2 size={15} aria-hidden="true" />
+        </button>
+      </div>
+      {expanded && (
+        <section
+          className="history-details"
+          id={`details-${run.id}`}
+          aria-label={`Details for run ${run.id}`}
+        >
+          <dl className="history-metadata">
+            <div>
+              <dt>Run ID</dt>
+              <dd>{run.id}</dd>
+            </div>
+            {target_violation != null && (
+              <div>
+                <dt>Violation target</dt>
+                <dd>{Number((target_violation * 100).toFixed(2))}%</dd>
+              </div>
+            )}
+            {seed != null && (
+              <div>
+                <dt>Random seed</dt>
+                <dd>{seed}</dd>
+              </div>
+            )}
+          </dl>
+          {run.result && run.status === "ok" ? (
+            <SimulationResultView
+              result={run.result}
+              source={run.source}
+              persisted
+            />
+          ) : (
+            <p className="history-detail-message">
+              {run.error || "No evaluation results were recorded for this run."}
+            </p>
+          )}
+        </section>
+      )}
+    </li>
+  );
+}
+
+function DeleteDialog({
+  run,
+  onCancel,
+  onDeleted,
+}: {
+  run: SavedRun;
+  onCancel: () => void;
+  onDeleted: () => void;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  useLayoutEffect(() => {
+    const element = dialog.current;
+    element?.showModal();
+    return () => element?.close();
+  }, []);
+
+  async function confirmDelete() {
+    setBusy(true);
+    setError("");
     try {
-      const data = await getRuns(limit, offset);
-      setRuns(data.runs);
-      setTotal(data.total);
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        setErrorMsg(err.message);
-      } else {
-        setErrorMsg("Failed to load past simulation runs.");
-      }
-    } finally {
-      setIsLoading(false);
+      await deleteRun(run.id);
+      onDeleted();
+    } catch (err) {
+      setError(messageOf(err, "Could not delete this run. Try again."));
+      setBusy(false);
     }
-  }, [limit, offset]);
+  }
 
-  useEffect(() => {
-    fetchRuns();
-  }, [fetchRuns]);
+  return (
+    <dialog
+      ref={dialog}
+      className="history-dialog"
+      aria-labelledby="history-delete-title"
+      aria-describedby="history-delete-description"
+      onCancel={(event) => {
+        event.preventDefault();
+        if (!busy) onCancel();
+      }}
+    >
+      <div className="history-dialog-body">
+        <h2 id="history-delete-title">Delete this run?</h2>
+        <p id="history-delete-description">
+          This permanently removes run <code>{run.id.slice(0, 8)}</code> and its
+          results from your history.
+        </p>
+        {error && <p role="alert">{error}</p>}
+      </div>
+      <div className="history-dialog-actions">
+        <button
+          autoFocus
+          className="btn btn-secondary"
+          type="button"
+          disabled={busy}
+          onClick={onCancel}
+        >
+          Cancel
+        </button>
+        <button
+          className="btn btn-primary"
+          type="button"
+          disabled={busy}
+          onClick={confirmDelete}
+        >
+          {busy ? "Deleting…" : "Delete run"}
+        </button>
+      </div>
+    </dialog>
+  );
+}
 
-  // Load single run detail when URL parameter id is present
+function LinkedRun({
+  id,
+  onClose,
+  onDelete,
+}: {
+  id: string;
+  onClose: () => void;
+  onDelete: (run: SavedRun) => void;
+}) {
+  const [run, setRun] = useState<SavedRun | null>(null);
+  const [error, setError] = useState("");
   useEffect(() => {
-    if (id) {
-      setLoadingDetail(true);
-      getRun(id)
-        .then((data) => setSelectedRun(data))
-        .catch((err) => {
-          setErrorMsg(err.message || "Failed to load run detail.");
-        })
-        .finally(() => setLoadingDetail(false));
-    } else {
-      setSelectedRun(null);
-    }
+    let active = true;
+    getRun(id)
+      .then((data) => {
+        if (active) setRun(data);
+      })
+      .catch((err) => {
+        if (active) setError(messageOf(err, "Could not load this run."));
+      });
+    return () => {
+      active = false;
+    };
   }, [id]);
+  if (run)
+    return <RunRow run={run} expanded onToggle={onClose} onDelete={onDelete} />;
+  return (
+    <li className="history-linked-state">
+      {error ? (
+        <>
+          <p role="alert">{error}</p>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>
+            Close details
+          </button>
+        </>
+      ) : (
+        <p role="status">Loading run details…</p>
+      )}
+    </li>
+  );
+}
 
-  const confirmDelete = async () => {
-    if (!deleteId) return;
-    setIsDeleting(true);
-    try {
-      await deleteRun(deleteId);
-      setDeleteId(null);
-      if (selectedRun?.id === deleteId) {
-        setSelectedRun(null);
-        navigate("/history", { replace: true });
-      }
-      await fetchRuns();
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        setErrorMsg(err.message);
-      } else {
-        setErrorMsg("Failed to delete run.");
-      }
-    } finally {
-      setIsDeleting(false);
+function RunHistory({ page }: { page: number }) {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const [records, setRecords] = useState<SavedRun[] | null>(null);
+  const [listError, setListError] = useState("");
+  const [revision, setRevision] = useState(0);
+  const [deleting, setDeleting] = useState<SavedRun | null>(null);
+  const [notice, setNotice] = useState("");
+  const listHeading = useRef<HTMLHeadingElement>(null);
+  const offset = (page - 1) * PAGE_SIZE;
+
+  useEffect(() => {
+    let active = true;
+    setListError("");
+    setRecords(null);
+    // The API returns rows without a total. One extra row establishes whether another page exists.
+    getRuns(PAGE_SIZE + 1, offset)
+      .then((data) => {
+        if (active) setRecords(data);
+      })
+      .catch((err) => {
+        if (active) setListError(messageOf(err, "Could not load saved runs."));
+      });
+    return () => {
+      active = false;
+    };
+  }, [offset, revision]);
+
+  const visible = records?.slice(0, PAGE_SIZE) ?? [];
+  const hasNext = (records?.length ?? 0) > PAGE_SIZE;
+  const showLinked =
+    id &&
+    (records !== null || listError) &&
+    !visible.some((run) => run.id === id);
+  const closeDetails = () => navigate(historyPath(page));
+  const onDeleted = () => {
+    if (!deleting) return;
+    setDeleting(null);
+    setNotice(`Deleted run ${deleting.id.slice(0, 8)}.`);
+    if (page > 1 && visible.length === 1 && visible[0].id === deleting.id) {
+      navigate(historyPath(page - 1), { replace: true });
+    } else {
+      if (id === deleting.id) navigate(historyPath(page), { replace: true });
+      setRevision((value) => value + 1);
     }
+    listHeading.current?.focus();
   };
 
   return (
     <div className="history-page">
-      <DisclaimerBanner />
-
-      <section className="card">
-        <h1 className="card-title" style={{ fontSize: "1.4rem" }}>
-          Visitor Simulation History
-        </h1>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.95rem" }}>
-          Simulation runs are saved to your visitor session (scoped via HttpOnly
-          secure cookie).
-        </p>
-
-        {errorMsg && (
-          <div className="alert alert-error" style={{ marginTop: "1rem" }} role="alert">
-            {errorMsg}
-          </div>
-        )}
-
-        {isLoading ? (
-          <div style={{ padding: "2rem 0", textAlign: "center" }}>
-            Loading runs...
-          </div>
-        ) : runs.length === 0 ? (
-          <div style={{ padding: "2rem 0", textAlign: "center", color: "var(--text-muted)" }}>
-            No simulation runs saved yet.{" "}
-            <Link to="/simulate">Run a simulation</Link> to generate history.
-          </div>
-        ) : (
-          <>
-            <div className="table-container">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Timestamp</th>
-                    <th>Services</th>
-                    <th>Steps</th>
-                    <th>Target Viol</th>
-                    <th>Comparator</th>
-                    <th>H1 Verdict</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {runs.map((r) => (
-                    <tr
-                      key={r.id}
-                      style={{ cursor: "pointer" }}
-                      onClick={() => navigate(`/history/${r.id}`)}
-                    >
-                      <td>
-                        {new Date(r.created_at).toLocaleString(undefined, {
-                          dateStyle: "short",
-                          timeStyle: "short",
-                        })}
-                      </td>
-                      <td>{r.n_services}</td>
-                      <td>{r.n_steps}</td>
-                      <td>{(r.target_violation * 100).toFixed(1)}%</td>
-                      <td>{r.time_comparator}</td>
-                      <td>
-                        <span
-                          className={`badge ${
-                            r.time_h1_verdict
-                              ? "badge-supported"
-                              : "badge-not-supported"
-                          }`}
-                        >
-                          {r.time_h1_verdict ? "SUPPORTED" : "NOT SUPPORTED"}
-                        </span>
-                      </td>
-                      <td onClick={(e) => e.stopPropagation()}>
-                        <div style={{ display: "flex", gap: "0.5rem" }}>
-                          <Link
-                            to={`/history/${r.id}`}
-                            className="btn btn-secondary"
-                            style={{ padding: "0.2rem 0.5rem", fontSize: "0.75rem" }}
-                          >
-                            View
-                          </Link>
-                          <button
-                            type="button"
-                            className="btn btn-danger"
-                            style={{ padding: "0.2rem 0.5rem", fontSize: "0.75rem" }}
-                            onClick={() => setDeleteId(r.id)}
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Pagination Controls */}
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginTop: "1rem",
-              }}
-            >
-              <div style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
-                Showing {runs.length > 0 ? offset + 1 : 0} -{" "}
-                {Math.min(offset + limit, total)} of {total} runs
-              </div>
-              <div style={{ display: "flex", gap: "0.5rem" }}>
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  disabled={offset === 0}
-                  onClick={() => setOffset(Math.max(0, offset - limit))}
-                >
-                  Previous
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  disabled={offset + limit >= total}
-                  onClick={() => setOffset(offset + limit)}
-                >
-                  Next
-                </button>
-              </div>
-            </div>
-          </>
-        )}
-      </section>
-
-      {/* Selected Run Detail */}
-      {loadingDetail && (
-        <div className="card" style={{ textAlign: "center", padding: "2rem" }}>
-          Loading run details...
+      <header className="history-heading">
+        <div>
+          <h1>Experiment history</h1>
+          <p>
+            Review allocation results from runs saved to this browser’s visitor
+            session.
+          </p>
         </div>
-      )}
+        <Link className="btn btn-primary" to="/simulate">
+          <Plus size={16} aria-hidden="true" /> New simulation
+        </Link>
+      </header>
 
-      {selectedRun && (
-        <div style={{ marginTop: "1.5rem" }}>
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              marginBottom: "0.5rem",
-            }}
-          >
-            <h2 className="card-title" style={{ margin: 0 }}>
-              Run Detail: {selectedRun.id}
-            </h2>
+      {showLinked && (
+        <section className="history-panel" aria-label="Selected experiment">
+          <div className="history-toolbar">
+            <h2>Selected experiment</h2>
+          </div>
+          <ul className="history-list">
+            <LinkedRun
+              key={id}
+              id={id}
+              onClose={closeDetails}
+              onDelete={setDeleting}
+            />
+          </ul>
+        </section>
+      )}
+      <section className="history-panel" aria-labelledby="saved-runs-title">
+        <div className="history-toolbar">
+          <h2 ref={listHeading} tabIndex={-1} id="saved-runs-title">
+            <ListTree size={17} aria-hidden="true" /> Saved runs
+          </h2>
+          <span className="history-scope">
+            <LockKeyhole size={13} aria-hidden="true" /> Visitor session
+          </span>
+        </div>
+        {listError ? (
+          <div className="history-state">
+            <CircleAlert size={24} aria-hidden="true" />
+            <h3>History unavailable</h3>
+            <p role="alert">{listError}</p>
             <button
               type="button"
               className="btn btn-secondary"
-              onClick={() => {
-                setSelectedRun(null);
-                navigate("/history", { replace: true });
-              }}
+              onClick={() => setRevision((value) => value + 1)}
             >
-              Close Detail
+              Try again
             </button>
           </div>
-          <SimulationResultView result={selectedRun} />
-        </div>
-      )}
-
-      {/* Delete Confirmation Modal */}
-      {deleteId && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true">
-          <div className="modal-content">
-            <h3 style={{ marginBottom: "0.75rem" }}>Delete Run</h3>
-            <p style={{ color: "var(--text-muted)", fontSize: "0.9rem" }}>
-              Are you sure you want to permanently delete this simulation run? This
-              action cannot be undone.
+        ) : records === null ? (
+          <div className="history-state" role="status">
+            <History size={24} aria-hidden="true" /> Loading saved runs…
+          </div>
+        ) : !visible.length ? (
+          <div className="history-state">
+            <span className="history-empty-icon">
+              <History size={24} aria-hidden="true" />
+            </span>
+            <h3>
+              {page === 1
+                ? "No simulation runs saved yet"
+                : "No runs on this page"}
+            </h3>
+            <p>
+              {page === 1
+                ? "Run a simulation or upload a workload to see its results here."
+                : "Return to the first page to see your latest runs."}
             </p>
-            <div className="modal-actions">
+            {page > 1 && (
+              <Link className="btn btn-secondary" to="/history">
+                First page
+              </Link>
+            )}
+          </div>
+        ) : null}
+        {visible.length > 0 && (
+          <>
+            <div className="history-columns" aria-hidden="true">
+              <span>Experiment</span>
+              <span>Status</span>
+              <span>Duration</span>
+              <span>Created</span>
+            </div>
+            <ul className="history-list">
+              {visible.map((run) => (
+                <RunRow
+                  key={run.id}
+                  run={run}
+                  expanded={id === run.id}
+                  onDelete={setDeleting}
+                  onToggle={() =>
+                    navigate(
+                      historyPath(page, id === run.id ? undefined : run.id),
+                    )
+                  }
+                />
+              ))}
+            </ul>
+          </>
+        )}
+        {visible.length > 0 && (
+          <nav className="history-pagination" aria-label="History pagination">
+            <span>
+              Showing {offset + 1}–{offset + visible.length}
+            </span>
+            <div>
               <button
                 type="button"
-                className="btn btn-secondary"
-                disabled={isDeleting}
-                onClick={() => setDeleteId(null)}
+                disabled={page === 1}
+                onClick={() => navigate(historyPath(page - 1))}
+                aria-label="Previous page"
               >
-                Cancel
+                <ChevronLeft size={16} aria-hidden="true" />
               </button>
+              <span>Page {page}</span>
               <button
                 type="button"
-                className="btn btn-danger"
-                disabled={isDeleting}
-                onClick={confirmDelete}
+                disabled={!hasNext}
+                onClick={() => navigate(historyPath(page + 1))}
+                aria-label="Next page"
               >
-                {isDeleting ? "Deleting..." : "Confirm Delete"}
+                <ChevronRight size={16} aria-hidden="true" />
               </button>
             </div>
-          </div>
-        </div>
+          </nav>
+        )}
+      </section>
+      {notice && (
+        <p className="history-notice" role="status">
+          {notice}
+        </p>
+      )}
+      <DisclaimerBanner />
+      {deleting && (
+        <DeleteDialog
+          run={deleting}
+          onCancel={() => setDeleting(null)}
+          onDeleted={onDeleted}
+        />
       )}
     </div>
   );
-};
+}
+
+export function HistoryPage() {
+  const [search] = useSearchParams();
+  const requested = Number(search.get("page"));
+  const page =
+    Number.isSafeInteger(requested) &&
+    requested > 0 &&
+    Number.isSafeInteger(requested * PAGE_SIZE)
+      ? requested
+      : 1;
+  return <RunHistory key={page} page={page} />;
+}

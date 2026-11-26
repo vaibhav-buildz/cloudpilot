@@ -32,18 +32,18 @@ describe("SimulatePage", () => {
       </BrowserRouter>
     );
 
-    expect(screen.getByText(/Run Synthetic Simulation/i)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Simulation" })).toBeInTheDocument();
 
     // Wait for limits to load
     await waitFor(() => {
       expect(
-        screen.getByText(/Number of Services \(max: 40\)/i)
+        screen.getByText(/3–40 independent services/i)
       ).toBeInTheDocument();
     });
 
     // Click Small Preset
     const smallBtn = screen.getByRole("button", {
-      name: /Small \(5 svc, 600 steps\)/i,
+      name: /Small.*5 services.*600 steps/i,
     });
     fireEvent.click(smallBtn);
 
@@ -55,7 +55,7 @@ describe("SimulatePage", () => {
 
     // Click Medium Preset
     const mediumBtn = screen.getByRole("button", {
-      name: /Medium \(20 svc, 3 days\)/i,
+      name: /Medium.*20 services.*800 steps/i,
     });
     fireEvent.click(mediumBtn);
     expect(servicesInput.value).toBe("20");

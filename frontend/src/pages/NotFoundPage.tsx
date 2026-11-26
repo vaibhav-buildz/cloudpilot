@@ -1,18 +1,14 @@
-import React from "react";
 import { Link } from "react-router-dom";
 
-export const NotFoundPage: React.FC = () => {
+export function NotFoundPage() {
   return (
-    <div className="card" style={{ margin: "3rem auto", maxWidth: 500, textAlign: "center" }}>
-      <h1 className="card-title" style={{ fontSize: "1.5rem" }}>
-        404 - Page Not Found
-      </h1>
-      <p style={{ color: "var(--text-muted)", marginBottom: "1.25rem" }}>
-        The requested page does not exist or has been moved.
-      </p>
+    <section className="missing-page">
+      <small>HTTP 404</small>
+      <h1>Page not found</h1>
+      <p>This workspace page has moved or the address is incorrect.</p>
       <Link to="/" className="btn btn-primary">
-        Return to Overview
+        Return to overview
       </Link>
-    </div>
+    </section>
   );
-};
+}

@@ -11,7 +11,7 @@ describe("UploadPage", () => {
       </BrowserRouter>
     );
 
-    expect(screen.getByText(/Upload Workload CSV/i)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "CSV upload" })).toBeInTheDocument();
     expect(screen.getByText(/Expected CSV Format/i)).toBeInTheDocument();
     expect(screen.getByText(/service_id,timestamp,cpu_demand/i)).toBeInTheDocument();
 
@@ -21,7 +21,7 @@ describe("UploadPage", () => {
       type: "text/csv",
     });
 
-    const dropZone = screen.getByText(/Choose CSV or drag and drop here/i);
+    const dropZone = screen.getByText(/Drop your CSV here/i);
     fireEvent.drop(dropZone, {
       dataTransfer: { files: [oversizedFile] },
     });
