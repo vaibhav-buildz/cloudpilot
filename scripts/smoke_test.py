@@ -29,6 +29,14 @@ def _response_detail(response: httpx.Response, *secrets: str) -> str:
     return f"HTTP {response.status_code}" + (f" body={body[:500]!r}" if body else "")
 
 
+def _json_object(response: httpx.Response) -> dict | None:
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    return body if isinstance(body, dict) else None
+
+
 def _require_env(name: str) -> str:
     val = os.environ.get(name, "").strip()
     if not val:
@@ -93,14 +101,14 @@ def main() -> int:
                 headers={"Origin": frontend_url, "Content-Type": "application/json"},
                 json=workload,
             )
-            if sim_res.status_code != 200:
+            body = _json_object(sim_res) if sim_res.status_code == 200 else None
+            if body is None:
                 report(
                     "proxy_simulate_and_readback",
                     False,
                     f"POST {describe(sim_res)}",
                 )
             else:
-                body = sim_res.json()
                 run_id = body.get("run_id")
                 saved = body.get("saved")
                 if saved is not True or not run_id:
@@ -111,7 +119,10 @@ def main() -> int:
                     )
                 else:
                     read_res = client.get(f"{frontend_url}/api/runs/{run_id}")
-                    read_ok = read_res.status_code == 200 and read_res.json().get("id") == run_id
+                    read_ok = (
+                        read_res.status_code == 200
+                        and (_json_object(read_res) or {}).get("id") == run_id
+                    )
                     report(
                         "proxy_simulate_and_readback",
                         read_ok,
@@ -168,17 +179,18 @@ def main() -> int:
                 f"{backend_url}/api/limits",
                 headers=direct_headers,
             )
-            if limits_res.status_code != 200:
+            limits = _json_object(limits_res) if limits_res.status_code == 200 else None
+            if limits is None or not isinstance(limits.get("max_services"), int):
                 report("simulation_caps", False, f"GET limits {describe(limits_res)}")
             else:
-                max_services = int(limits_res.json()["max_services"])
+                max_services = limits["max_services"]
                 over_res = client.post(
                     f"{backend_url}/api/simulate",
                     headers=direct_headers,
                     json={**workload, "n_services": max_services + 100},
                 )
                 caps_ok = over_res.status_code == 422 and "SIM_MAX_SERVICES" in str(
-                    over_res.json().get("detail")
+                    (_json_object(over_res) or {}).get("detail")
                 )
                 report("simulation_caps", caps_ok, f"POST {describe(over_res, caps_ok)}")
         except Exception as exc:

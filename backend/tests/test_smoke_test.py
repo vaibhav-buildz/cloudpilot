@@ -15,8 +15,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 smoke = import_module("scripts.smoke_test")
 
 
-@pytest.mark.parametrize("cap_detail", ["exceeds SIM_MAX_SERVICES limit", "invalid n_steps"])
-def test_smoke_checks_real_cap_and_uses_valid_workloads(monkeypatch, capsys, cap_detail):
+@pytest.mark.parametrize(
+    ("cap_detail", "html_proxy"),
+    [
+        ("exceeds SIM_MAX_SERVICES limit", False),
+        ("invalid n_steps", False),
+        ("exceeds SIM_MAX_SERVICES limit", True),
+    ],
+)
+def test_smoke_checks_real_cap_and_uses_valid_workloads(
+    monkeypatch, capsys, cap_detail, html_proxy
+):
     monkeypatch.setenv("BACKEND_URL", "https://backend.example")
     monkeypatch.setenv("FRONTEND_URL", "https://frontend.example")
     monkeypatch.setenv("CLOUDPILOT_API_KEY", "synthetic-test-key")
@@ -52,6 +61,8 @@ def test_smoke_checks_real_cap_and_uses_valid_workloads(monkeypatch, capsys, cap
                 return httpx.Response(422, json={"detail": cap_detail})
             assert payload["n_services"] == 4
             assert "X-API-Key" not in request.headers
+            if html_proxy:
+                return httpx.Response(200, text="<html>Wrong upstream</html>")
             return httpx.Response(
                 200,
                 json={"saved": True, "run_id": run_id},
@@ -67,9 +78,13 @@ def test_smoke_checks_real_cap_and_uses_valid_workloads(monkeypatch, capsys, cap
         lambda **kwargs: client_type(transport=httpx.MockTransport(respond), **kwargs),
     )
     expected = "SIM_MAX_SERVICES" in cap_detail
-    assert smoke.main() == (0 if expected else 1)
+    assert smoke.main() == (0 if expected and not html_proxy else 1)
     captured = capsys.readouterr().out
-    assert "PASS proxy_simulate_and_readback" in captured
+    if html_proxy:
+        assert "FAIL proxy_simulate_and_readback: POST HTTP 200" in captured
+        assert "Wrong upstream" in captured
+    else:
+        assert "PASS proxy_simulate_and_readback" in captured
     if expected:
         assert "PASS simulation_caps" in captured
     else:
