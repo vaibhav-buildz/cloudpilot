@@ -16,6 +16,8 @@ services:
         sync: false
       - key: RATE_LIMIT_PER_MIN
         value: "30"
+      - key: GLOBAL_SIM_PER_MIN
+        value: "20"
       - key: SIM_MAX_STEPS
         value: "1000"
       - key: SIM_MAX_SERVICES
