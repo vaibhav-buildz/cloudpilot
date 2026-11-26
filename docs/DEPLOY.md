@@ -21,7 +21,7 @@ All variable names match [backend/app/config.py](../backend/app/config.py) and [
 | `GLOBAL_SIM_PER_MIN` | Render / Local | No | Global `/api/simulate*` cap across all clients (default `20`). |
 | `SIM_MAX_STEPS` | Render / Local | No | Max time steps per simulation (default `1000`). |
 | `SIM_MAX_SERVICES` | Render / Local | No | Max services per simulation (default `20`). |
-| `SIM_TIMEOUT_SECONDS` | Render / Local | No | Simulation execution timeout (default `60`). |
+| `SIM_TIMEOUT_SECONDS` | Render / Local | No | Simulation execution timeout (`50` in `render.yaml`, default `60`). |
 | `SUPABASE_URL` | Render / Local | No | `https://<project-ref>.supabase.co` (HTTPS required in production). |
 | `SUPABASE_SERVICE_KEY` | Render / Local | Yes | Supabase service role / secret key for PostgREST. |
 | `BACKEND_URL` | Vercel / Local | No | Render backend base URL (`https://...`), used server-side by proxy. |

@@ -23,7 +23,7 @@ services:
       - key: SIM_MAX_SERVICES
         value: "20"
       - key: SIM_TIMEOUT_SECONDS
-        value: "60"
+        value: "50"
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_KEY

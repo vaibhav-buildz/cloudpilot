@@ -1,3 +1,5 @@
+import fs from "fs";
+import path from "path";
 import { describe, expect, it } from "vitest";
 import {
   isPathSafe,
@@ -215,5 +217,12 @@ describe("Proxy Helper: Upstream URL and Body Validation", () => {
     );
     expect(invalidType.valid).toBe(false);
     expect(invalidType.status).toBe(415);
+  });
+
+  it("configures vercel.json function maxDuration >= SIM_TIMEOUT_SECONDS + margin", () => {
+    const vercelConfigPath = path.resolve(__dirname, "../../vercel.json");
+    const vercelConfig = JSON.parse(fs.readFileSync(vercelConfigPath, "utf-8"));
+    const maxDuration = vercelConfig?.functions?.["api/[...path].ts"]?.maxDuration;
+    expect(maxDuration).toBeGreaterThanOrEqual(60);
   });
 });
