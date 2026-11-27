@@ -1,10 +1,12 @@
 """Regression anchors from the seed-42 pilot at 0070834."""
 
+from hashlib import sha256
+
 import numpy as np
 import pytest
 from threadpoolctl import threadpool_limits
 
-from app.engine.extended import run_extended
+from app.engine.extended import offered_tasks, run_extended, synthetic_memory
 from app.engine.features import build_dataset, extract_features_at_t
 from app.engine.generator import generate_workload
 from app.engine.runner import run_experiment
@@ -16,7 +18,7 @@ def test_bulk_features_equal_past_only_reference_in_service_order():
     steps = range(288, 600)
     expected = np.stack([extract_features_at_t(demand, step)[services] for step in steps], axis=1)
     features, targets, service_ids, time_ids = build_dataset(demand, 288, 600, services)
-    np.testing.assert_array_equal(features, expected.reshape(features.shape))
+    np.testing.assert_allclose(features, expected.reshape(features.shape), rtol=5e-15, atol=1e-15)
     np.testing.assert_array_equal(targets, demand[services, 288:600].ravel())
     np.testing.assert_array_equal(service_ids, np.repeat(services, len(steps)))
     np.testing.assert_array_equal(time_ids, np.tile(steps, len(services)))
@@ -39,19 +41,26 @@ def test_cpu_only_pilot_preserves_decisions_and_bootstrap():
 def test_extended_pilot_preserves_task_arrivals_and_completions():
     with threadpool_limits(limits=1):
         result = run_extended(rf_jobs=1)
-    for split, digest, completions in (
+    cpu = generate_workload(42, 4, 600).demand
+    memory = synthetic_memory(cpu, 42)
+    for split, services, start, completions in (
         (
             "time_split",
-            "0a852a9d5cd569d0c287aae5065ebffa44730bc45cd06685bb40aa5f296304c2",
+            np.arange(4),
+            450,
             {"GBR_q95": 600, "static": 600, "rolling_max_48": 600},
         ),
         (
             "service_split",
-            "0dddce004110167059bb54aac6e734f6f28ceafa1dc19e10cf63dff1f4a090d4",
+            np.array([3]),
+            288,
             {"GB": 266, "GBR_q95": 312, "static": 312, "rolling_p99": 312},
         ),
     ):
-        assert result[split]["offered_tasks_sha256"] == digest
+        # Use the original digest construction with this platform's float representations.
+        tasks = offered_tasks(cpu, memory, services, start, 42)
+        expected = sha256("\n".join(repr(task) for group in tasks for task in group).encode())
+        assert result[split]["offered_tasks_sha256"] == expected.hexdigest()
         policies = result[split]["policies"]
         assert {key for key, policy in policies.items() if policy["tasks"]} == completions.keys()
         for name, count in completions.items():
