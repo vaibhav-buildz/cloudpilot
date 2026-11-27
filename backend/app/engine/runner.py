@@ -52,6 +52,8 @@ def run_split_pipeline(
     n_estimators_override: int | None = None,
     include_diagnostics: bool = False,
     observe_allocations: Callable[[str, np.ndarray, np.ndarray, np.ndarray], None] | None = None,
+    rf_jobs: int = -1,
+    include_service_metrics: bool = True,
 ) -> dict[str, Any]:
     """Execute feature generation, training, validation margin tuning, and test evaluation.
 
@@ -70,23 +72,22 @@ def run_split_pipeline(
     n_test_steps = test_end - test_start
 
     # 1. Build canonical train / val / test datasets
-    X_train, y_train, srv_train, t_train = build_dataset(
-        demand, train_start, train_end, train_services
-    )
-    X_val, y_val, srv_val, t_val = build_dataset(demand, val_start, val_end, val_services)
+    X_train, y_train, _, _ = build_dataset(demand, train_start, train_end, train_services)
+    X_val, y_val, _, _ = build_dataset(demand, val_start, val_end, val_services)
     X_test, y_test, srv_test, t_test = build_dataset(demand, test_start, test_end, test_services)
 
-    static_val_2d = np.repeat(static_requests[val_services, np.newaxis], n_val_steps, axis=1)
-    static_val_flat = static_val_2d.flatten()
-
-    static_test_2d = np.repeat(static_requests[test_services, np.newaxis], n_test_steps, axis=1)
-    static_test_flat = static_test_2d.flatten()
+    static_val_flat = compute_static_allocation(n_val_steps, static_requests, val_services).reshape(
+        -1
+    )
+    static_test_flat = compute_static_allocation(
+        n_test_steps, static_requests, test_services
+    ).reshape(-1)
 
     # 2. Evaluate Baselines on Validation Split
     _check_deadline(deadline, "baseline tuning")
 
     baseline_val_preds: dict[str, np.ndarray] = {
-        "static": compute_static_allocation(n_val_steps, static_requests, val_services).flatten(),
+        "static": static_val_flat,
         "rolling_max_48": compute_rolling_max_48(
             demand, val_start, val_end, val_services
         ).flatten(),
@@ -119,9 +120,6 @@ def run_split_pipeline(
                 allocation=alloc,
                 static_requests=static_val_flat,
                 target_violation=target_violation,
-                predictions=preds,
-                service_indices=srv_val,
-                time_indices=t_val,
             )
             val_metrics[name] = val_m
         else:
@@ -130,9 +128,6 @@ def run_split_pipeline(
                 allocation=preds,
                 static_requests=static_val_flat,
                 target_violation=target_violation,
-                predictions=preds,
-                service_indices=srv_val,
-                time_indices=t_val,
                 is_feasible=False,
             )
 
@@ -149,9 +144,6 @@ def run_split_pipeline(
             allocation=ewma_alloc,
             static_requests=static_val_flat,
             target_violation=target_violation,
-            predictions=baseline_val_preds["ewma"],
-            service_indices=srv_val,
-            time_indices=t_val,
         )
     else:
         val_metrics["ewma"] = compute_metrics(
@@ -159,9 +151,6 @@ def run_split_pipeline(
             allocation=baseline_val_preds["ewma"],
             static_requests=static_val_flat,
             target_violation=target_violation,
-            predictions=baseline_val_preds["ewma"],
-            service_indices=srv_val,
-            time_indices=t_val,
             is_feasible=False,
         )
 
@@ -181,7 +170,7 @@ def run_split_pipeline(
 
     # 3. Fit ML Models & Select Validation Margins
     _check_deadline(deadline, "model training")
-    models = get_model_instances(n_estimators_override=n_estimators_override)
+    models = get_model_instances(n_estimators_override=n_estimators_override, rf_jobs=rf_jobs)
     test_preds: dict[str, np.ndarray] = {}
     model_val_preds: dict[str, np.ndarray] = {}
 
@@ -208,7 +197,7 @@ def run_split_pipeline(
 
     # 4. Compute Test Predictions for Baselines
     baseline_test_preds: dict[str, np.ndarray] = {
-        "static": compute_static_allocation(n_test_steps, static_requests, test_services).flatten(),
+        "static": static_test_flat,
         "rolling_max_48": compute_rolling_max_48(
             demand, test_start, test_end, test_services
         ).flatten(),
@@ -270,7 +259,7 @@ def run_split_pipeline(
             static_requests=static_test_flat,
             target_violation=target_violation,
             predictions=preds,
-            service_indices=srv_test,
+            service_indices=srv_test if include_service_metrics else None,
             time_indices=t_test,
             is_feasible=model_val_feasible,
         )
@@ -286,11 +275,14 @@ def run_split_pipeline(
             "mse": metrics.mse,
             "margin_type": margin.margin_type if margin else None,
             "margin_value": margin.margin_value if margin else None,
-            "per_service_sum_a": metrics.per_service_sum_a,
-            "per_service_sum_static": metrics.per_service_sum_static,
-            "per_service_sum_demand": metrics.per_service_sum_demand,
-            "per_service_savings": metrics.per_service_savings,
         }
+        if include_service_metrics:
+            test_results[name].update(
+                per_service_sum_a=metrics.per_service_sum_a,
+                per_service_sum_static=metrics.per_service_sum_static,
+                per_service_sum_demand=metrics.per_service_sum_demand,
+                per_service_savings=metrics.per_service_savings,
+            )
         for rows, trace in trace_rows:
             trace["methods"][name] = {
                 "predicted": preds[rows].tolist() if name != "static" else None,
@@ -314,6 +306,7 @@ def run_experiment(
     workload: WorkloadData | None = None,
     n_estimators_override: int | None = None,
     include_diagnostics: bool = False,
+    rf_jobs: int = -1,
 ) -> dict[str, Any]:
     """Execute complete CloudPilot benchmark across TIME and SERVICE splits."""
     start_time = time.time()
@@ -359,6 +352,7 @@ def run_experiment(
         deadline=deadline,
         n_estimators_override=n_estimators_override,
         include_diagnostics=include_diagnostics,
+        rf_jobs=rf_jobs,
     )
 
     # Hypothesis 1: GBR_q95 vs Comparator on TIME split
@@ -409,6 +403,7 @@ def run_experiment(
         deadline=deadline,
         n_estimators_override=n_estimators_override,
         include_diagnostics=include_diagnostics,
+        rf_jobs=rf_jobs,
     )
 
     # Hypothesis 2: Non-inferiority of GBR_q95 vs Comparator on SERVICE split within -1.0 pp

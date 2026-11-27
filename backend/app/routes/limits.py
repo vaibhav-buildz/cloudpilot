@@ -8,9 +8,8 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from app.config import Settings, get_settings
-from app.engine.csv_loader import MAX_CSV_BYTES
-from app.engine.extended import WEB_MAX_SERVICES, WEB_MAX_STEPS
 from app.security import verify_api_key
+from app.workload_limits import MAX_CSV_BYTES
 
 router = APIRouter(tags=["Limits"])
 
@@ -35,16 +34,12 @@ def get_limits(
         max_services=settings.SIM_MAX_SERVICES,
         max_steps=settings.SIM_MAX_STEPS,
         max_csv_bytes=MAX_CSV_BYTES,
-        timeout_seconds=settings.SIM_TIMEOUT_SECONDS,
+        timeout_seconds=settings.worker_timeout_seconds,
         history_limit=50,
         extended_max_services=(
-            min(settings.SIM_MAX_SERVICES, WEB_MAX_SERVICES)
-            if settings.extended_simulation_enabled
-            else None
+            settings.SIM_EXTENDED_MAX_SERVICES if settings.extended_simulation_enabled else None
         ),
         extended_max_steps=(
-            min(settings.SIM_MAX_STEPS, WEB_MAX_STEPS)
-            if settings.extended_simulation_enabled
-            else None
+            settings.SIM_EXTENDED_MAX_STEPS if settings.extended_simulation_enabled else None
         ),
     )

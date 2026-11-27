@@ -24,9 +24,11 @@ export function ExperimentModeField({
         }
       >
         <option value="cpu-only">CPU-only — existing protocol</option>
-        <option value="extended-v1" disabled={!enabled}>
-          Extended CPU + Memory + Tasks — extended-v1
-        </option>
+        {enabled && (
+          <option value="extended-v1">
+            Extended CPU + Memory + Tasks — extended-v1
+          </option>
+        )}
       </select>
       {!enabled && (
         <small>

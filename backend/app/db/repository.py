@@ -12,6 +12,8 @@ import httpx
 from app.config import Settings
 
 logger = logging.getLogger("cloudpilot")
+RUN_SUMMARY = "id,created_at,client_id,source,params,status,error,duration_ms"
+SAVE_ATTEMPT_TIMEOUT = httpx.Timeout(1.25)
 
 
 @runtime_checkable
@@ -110,7 +112,7 @@ class InMemoryRunRepository:
     ) -> list[dict[str, Any]]:
         client_runs = [r for r in self._runs.values() if r["client_id"] == client_id]
         client_runs.sort(key=lambda r: r["created_at"], reverse=True)
-        return client_runs[offset : offset + limit]
+        return [{**run, "result": None} for run in client_runs[offset : offset + limit]]
 
     async def get_run(
         self,
@@ -186,17 +188,12 @@ class SupabaseRunRepository:
         **kwargs: Any,
     ) -> httpx.Response:
         """Execute HTTP request with 1 retry on 5xx errors or network exceptions."""
-        last_exc: Exception | None = None
         for attempt in range(2):
             try:
                 resp = await self._client.request(method, path, **kwargs)
-                if resp.status_code < 500:
+                if resp.status_code < 500 or attempt == 1:
                     return resp
-                if attempt == 0:
-                    continue
-                return resp
-            except (httpx.RequestError, httpx.TimeoutException) as exc:
-                last_exc = exc
+            except httpx.RequestError as exc:
                 if attempt == 0:
                     continue
                 logger.warning(
@@ -205,8 +202,6 @@ class SupabaseRunRepository:
                 )
                 raise RuntimeError(f"PostgREST operation failed: {type(exc).__name__}") from None
 
-        if last_exc:
-            raise RuntimeError(f"PostgREST operation failed: {type(last_exc).__name__}") from None
         raise RuntimeError("PostgREST request failed with server error")
 
     @staticmethod
@@ -237,7 +232,9 @@ class SupabaseRunRepository:
         error: str | None = None,
         duration_ms: int | None = None,
     ) -> dict[str, Any]:
+        run_id = str(uuid.uuid4())
         payload = {
+            "id": run_id,
             "client_id": client_id,
             "source": source,
             "params": params,
@@ -246,21 +243,39 @@ class SupabaseRunRepository:
             "error": error,
             "duration_ms": duration_ms,
         }
-        headers = {"Prefer": "return=representation"}
-        resp = await self._request_with_retry(
-            "POST",
+        headers = {"Prefer": "resolution=ignore-duplicates,return=representation"}
+        write_params = {"on_conflict": "id", "select": RUN_SUMMARY}
+        try:
+            resp = await self._request_with_retry(
+                "POST",
+                "/simulation_runs",
+                json=payload,
+                headers=headers,
+                params=write_params,
+                timeout=SAVE_ATTEMPT_TIMEOUT,
+            )
+        except RuntimeError:
+            # The last attempt may have committed before its connection failed.
+            resp = None
+        if resp is not None:
+            if resp.status_code in (200, 201):
+                rows = resp.json()
+                if isinstance(rows, list) and rows and rows[0].get("id") == run_id:
+                    return rows[0]
+            elif resp.status_code < 500:
+                raise RuntimeError(self._format_postgrest_error("save simulation run", resp))
+
+        # A replay of an already committed insert returns no rows with ignore-duplicates.
+        verification = await self._client.get(
             "/simulation_runs",
-            json=payload,
-            headers=headers,
+            params={"client_id": f"eq.{client_id}", "id": f"eq.{run_id}", "select": RUN_SUMMARY},
+            timeout=SAVE_ATTEMPT_TIMEOUT,
         )
-        if resp.status_code not in (200, 201):
-            raise RuntimeError(self._format_postgrest_error("save simulation run", resp))
-        data = resp.json()
-        if isinstance(data, list) and len(data) > 0:
-            return data[0]
-        if isinstance(data, dict):
-            return data
-        raise RuntimeError("Unexpected response structure from PostgREST insert")
+        if verification.status_code == 200:
+            rows = verification.json()
+            if isinstance(rows, list) and rows and rows[0].get("id") == run_id:
+                return rows[0]
+        raise RuntimeError("Simulation save could not be confirmed")
 
     async def list_runs(
         self,
@@ -270,6 +285,7 @@ class SupabaseRunRepository:
     ) -> list[dict[str, Any]]:
         query_params = {
             "client_id": f"eq.{client_id}",
+            "select": RUN_SUMMARY,
             "order": "created_at.desc",
             "limit": str(limit),
             "offset": str(offset),
@@ -282,7 +298,7 @@ class SupabaseRunRepository:
         if resp.status_code != 200:
             raise RuntimeError(self._format_postgrest_error("list simulation runs", resp))
         data = resp.json()
-        return data if isinstance(data, list) else []
+        return [{**row, "result": None} for row in data] if isinstance(data, list) else []
 
     async def get_run(
         self,
@@ -313,6 +329,7 @@ class SupabaseRunRepository:
         query_params = {
             "client_id": f"eq.{client_id}",
             "id": f"eq.{run_id}",
+            "select": "id",
         }
         headers = {"Prefer": "return=representation"}
         resp = await self._request_with_retry(
@@ -343,7 +360,7 @@ class SupabaseRunRepository:
             params=query_params,
         )
         if resp.status_code != 200:
-            return 0
+            raise RuntimeError(self._format_postgrest_error("find runs to prune", resp))
         items = resp.json()
         if not isinstance(items, list) or len(items) == 0:
             return 0
@@ -355,6 +372,7 @@ class SupabaseRunRepository:
         delete_params = {
             "client_id": f"eq.{client_id}",
             "id": f"in.({','.join(ids)})",
+            "select": "id",
         }
         headers = {"Prefer": "return=representation"}
         del_resp = await self._request_with_retry(
@@ -366,13 +384,13 @@ class SupabaseRunRepository:
         if del_resp.status_code == 200:
             deleted_items = del_resp.json()
             return len(deleted_items) if isinstance(deleted_items, list) else 0
-        return 0
+        raise RuntimeError(self._format_postgrest_error("prune simulation runs", del_resp))
 
     async def ping(self) -> bool:
         try:
             resp = await self._client.get(
                 "/simulation_runs",
-                params={"limit": "1"},
+                params={"limit": "1", "select": "id"},
                 timeout=httpx.Timeout(2.0),
             )
             return resp.status_code < 400

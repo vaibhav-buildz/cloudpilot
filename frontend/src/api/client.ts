@@ -58,14 +58,18 @@ async function handleResponse<T>(res: Response): Promise<T> {
     }
     if (res.status === 504) {
       throw new ApiError(
-        "Simulation timed out on backend. Try smaller workload settings.",
+        detail || "The request timed out. Try a smaller workload once the backend is ready.",
         504,
       );
     }
     if (res.status === 502 || res.status === 503) {
+      const retryAfter = Number(res.headers.get("Retry-After")) || undefined;
       throw new ApiError(
-        "Backend service unavailable. Please check that the server is running.",
+        retryAfter && detail
+          ? detail
+          : "The backend may be starting. Wait a moment and try again.",
         res.status,
+        retryAfter,
       );
     }
 
@@ -133,7 +137,7 @@ export function runSimulationCsv(
     const cancelled = () =>
       reject(
         new ApiError(
-          "Request cancelled. The server may still finish this run.",
+          "Request cancelled. Check History if the run finished before cancellation.",
           499,
         ),
       );

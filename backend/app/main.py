@@ -21,6 +21,7 @@ from app.routes.limits import router as limits_router
 from app.routes.runs import router as runs_router
 from app.routes.simulate import router as simulate_router
 from app.security import verify_api_key
+from app.simulation_process import SimulationProcesses
 
 logger = logging.getLogger("cloudpilot")
 
@@ -44,10 +45,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "CloudPilot control plane started",
             extra={"app_env": app_settings.APP_ENV},
         )
-        yield
-        if hasattr(repo, "aclose"):
-            await repo.aclose()
-        logger.info("CloudPilot control plane stopping")
+        try:
+            yield
+        finally:
+            app.state.simulations.close()
+            if hasattr(repo, "aclose"):
+                await repo.aclose()
+            logger.info("CloudPilot control plane stopping")
 
     app = FastAPI(
         title="CloudPilot Backend",
@@ -59,6 +63,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Store settings, repository, and wire dependency override for consistent app instances
     app.state.settings = app_settings
     app.state.repo = repo
+    app.state.simulations = SimulationProcesses(app_settings.SIM_MAX_CONCURRENT)
     app.dependency_overrides[get_settings] = lambda: app_settings
 
     # Strict CORS configuration
@@ -68,6 +73,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type", "X-API-Key", "Authorization", "X-Request-ID"],
+        expose_headers=["Retry-After"],
     )
 
     @app.middleware("http")

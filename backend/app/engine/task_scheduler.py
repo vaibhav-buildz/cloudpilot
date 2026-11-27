@@ -90,7 +90,7 @@ def run_service(
             else:
                 waiting.append(state)
         active: list[TaskState] = []
-        suspended: list[TaskState] = []
+        suspended: deque[TaskState] = deque()
         available = float(gib)
         cpu_used = 0.0
         memory_used = 0.0
@@ -105,7 +105,7 @@ def run_service(
 
         while now < end:
             while suspended and suspended[0].task.memory_gib <= available:
-                state = suspended.pop(0)
+                state = suspended.popleft()
                 state.suspended = False
                 available -= state.task.memory_gib
                 active.append(state)

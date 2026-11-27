@@ -229,3 +229,38 @@ def test_extended_routes_are_opt_in_and_keep_visitor_scoping(valid_dev_settings)
         other = headers | {"X-Visitor-Id": "44444444-4444-4444-8444-444444444444"}
         assert client.get(path, headers=other).status_code == 404
         assert client.delete(path, headers=headers).status_code == 200
+
+
+def test_production_extended_flag_has_independent_caps(valid_dev_settings):
+    from fastapi.testclient import TestClient
+
+    from app.main import create_app
+    from tests.conftest import TEST_VALID_KEY
+
+    settings = valid_dev_settings.model_copy(
+        update={
+            "APP_ENV": "production",
+            "ALLOWED_ORIGIN": "https://example.com",
+            "SUPABASE_URL": "https://example.com",
+            "SUPABASE_SERVICE_KEY": "test-only",
+            "SIM_MAX_SERVICES": 3,
+            "ENABLE_PRODUCTION_EXTENDED_SIMULATION": True,
+        }
+    )
+    with TestClient(create_app(settings)) as client:
+        headers = {"X-API-Key": TEST_VALID_KEY}
+        limits = client.get("/api/limits", headers=headers).json()
+        assert limits["max_services"] == 3
+        assert limits["extended_max_services"] == 4 and limits["extended_max_steps"] == 600
+        assert (
+            client.post(
+                "/api/simulate",
+                headers=headers,
+                json={
+                    "mode": "extended-v1",
+                    "n_services": 5,
+                    "n_steps": 600,
+                },
+            ).status_code
+            == 422
+        )

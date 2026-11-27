@@ -12,8 +12,7 @@ import numpy as np
 
 from app.engine.features import MIN_WORKLOAD_SERVICES, MIN_WORKLOAD_STEPS
 from app.engine.generator import WorkloadData
-
-MAX_CSV_BYTES = 5 * 1024 * 1024  # 5 MB upload limit
+from app.workload_limits import MAX_CSV_BYTES as MAX_CSV_BYTES
 
 
 def load_workload_from_csv(csv_bytes: bytes) -> WorkloadData:

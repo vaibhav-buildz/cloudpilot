@@ -208,7 +208,7 @@ function CpuResults({
           {saved === true
             ? "Saved to history"
             : saved === false
-              ? "Run completed without a history save"
+              ? "History save could not be confirmed"
               : "Save status unavailable"}
           {saved && result.run_id && !persisted && (
             <Link to={`/history/${encodeURIComponent(result.run_id)}`}>

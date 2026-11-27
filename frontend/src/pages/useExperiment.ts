@@ -13,7 +13,7 @@ const defaultLimits: LimitsResponse = {
   max_services: 20,
   max_steps: 1000,
   max_csv_bytes: 5242880,
-  timeout_seconds: 60,
+  timeout_seconds: 42,
   history_limit: 50,
 };
 
@@ -76,7 +76,7 @@ export function useExperiment() {
     } catch (reason) {
       if (controller.current !== active) return;
       if (reason instanceof ApiError && reason.status === 499) {
-        setError("Request cancelled. The server may still finish this run.");
+        setError("Request cancelled. Check History if the run finished before cancellation.");
       } else if (reason instanceof ApiError) {
         const retryHint = reason.retryAfter
           ? ` Retry after ${reason.retryAfter} seconds.`

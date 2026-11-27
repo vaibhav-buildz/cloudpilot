@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
-import threading
 import time
-from typing import Annotated, Any, Literal
+from typing import Annotated, Literal
 
 from fastapi import (
     APIRouter,
@@ -16,67 +16,25 @@ from fastapi import (
     HTTPException,
     Query,
     Request,
+    Response,
     UploadFile,
-    status,
 )
 from pydantic import BaseModel, Field
 
 from app.config import Settings, get_settings
-from app.engine.csv_loader import MAX_CSV_BYTES, load_workload_from_csv
-from app.engine.extended import (
-    MODE,
-    WEB_MAX_SERVICES,
-    WEB_MAX_STEPS,
-    parse_extended_csv,
-    run_extended,
-)
-from app.engine.features import MIN_WORKLOAD_SERVICES, MIN_WORKLOAD_STEPS
-from app.engine.runner import run_experiment
 from app.ratelimit import global_sim_limiter, rate_limiter
 from app.security import verify_api_key
+from app.workload_limits import MAX_CSV_BYTES, MIN_WORKLOAD_SERVICES, MIN_WORKLOAD_STEPS
 
 logger = logging.getLogger("cloudpilot")
-
 router = APIRouter(tags=["Simulation"])
 ExperimentMode = Literal["cpu-only", "extended-v1"]
+MODE = "extended-v1"
 
 
 def require_extended_enabled(mode: ExperimentMode, settings: Settings) -> None:
     if mode == MODE and not settings.extended_simulation_enabled:
-        raise HTTPException(
-            status_code=403, detail="Extended simulation is available offline only."
-        )
-
-
-def check_extended_web_size(n_services: int, n_steps: int) -> None:
-    if n_services > WEB_MAX_SERVICES or n_steps > WEB_MAX_STEPS:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Extended simulation permits up to {WEB_MAX_SERVICES} services and "
-            f"{WEB_MAX_STEPS} steps in local web mode. Use the offline CLI for larger runs.",
-        )
-
-
-class SimulationConcurrencyGate:
-    """Ensure each client runs only one simulation at a time."""
-
-    def __init__(self) -> None:
-        self._active_clients: set[str] = set()
-        self._lock = threading.Lock()
-
-    def acquire(self, client_id: str) -> bool:
-        with self._lock:
-            if client_id in self._active_clients:
-                return False
-            self._active_clients.add(client_id)
-            return True
-
-    def release(self, client_id: str) -> None:
-        with self._lock:
-            self._active_clients.discard(client_id)
-
-
-concurrency_gate = SimulationConcurrencyGate()
+        raise HTTPException(403, "Extended simulation is available offline only.")
 
 
 class SimulateRequest(BaseModel):
@@ -169,107 +127,140 @@ def get_available_methods() -> list[MethodInfo]:
     return AVAILABLE_METHODS
 
 
+async def wait_for_disconnect(request: Request) -> None:
+    # FastAPI has consumed the JSON or multipart body before admitting work.
+    while (await request.receive())["type"] != "http.disconnect":
+        pass
+
+
+async def persist_result(
+    request: Request, client_id: str, source: str, mode: str, result: dict, duration_ms: int
+) -> dict:
+    repo = getattr(request.app.state, "repo", None)
+    if repo is None:
+        return {"saved": False}
+    params = dict(result["parameters"])
+    if source == "csv":
+        params.pop("seed", None)
+    if mode == MODE:
+        params["mode"] = mode
+    try:
+        async with asyncio.timeout(4):
+            record = await repo.save_run(
+                client_id=client_id,
+                source=source,
+                params=params,
+                status="ok",
+                result=result,
+                duration_ms=duration_ms,
+            )
+            run_id = record["id"]
+    except Exception as exc:
+        logger.warning("Simulation save could not be confirmed (%s)", type(exc).__name__)
+        return {"saved": False}
+
+    try:
+        async with asyncio.timeout(2):
+            await repo.prune(client_id=client_id, keep=50)
+    except Exception as exc:
+        logger.warning("Simulation history prune failed (%s)", type(exc).__name__)
+    return {"saved": True, "run_id": run_id}
+
+
+async def execute_job(
+    request: Request,
+    settings: Settings,
+    client_id: str,
+    mode: ExperimentMode,
+    parameters: dict,
+    contents: bytes | None,
+) -> Response:
+    started = time.perf_counter()
+    simulations = request.app.state.simulations
+    services, steps = settings.simulation_caps(mode == MODE)
+    encoded = await simulations.run(settings, mode, services, steps, parameters, contents)
+    duration_ms = round((time.perf_counter() - started) * 1000)
+    # Persist an ordinary decoded result for historical compatibility. Reuse the
+    # worker's byte representation for the response instead of re-encoding traces.
+    metadata = await persist_result(
+        request,
+        client_id,
+        "simulated" if contents is None else "csv",
+        mode,
+        json.loads(encoded),
+        duration_ms,
+    )
+    return Response(
+        content=encoded[:-1] + b"," + json.dumps(metadata, separators=(",", ":")).encode()[1:],
+        media_type="application/json",
+    )
+
+
+async def respond_to_simulation(
+    request: Request,
+    settings: Settings,
+    client_id: str,
+    mode: ExperimentMode,
+    parameters: dict,
+    file: UploadFile | None = None,
+) -> Response:
+    visitor = rate_limiter.extract_client_id(request)
+    with request.app.state.simulations.admit(visitor):
+        contents = None
+        if file is not None:
+            contents = await file.read(MAX_CSV_BYTES + 1)
+            if len(contents) > MAX_CSV_BYTES:
+                raise HTTPException(413, "Uploaded CSV exceeds the 5 MiB limit.")
+        work = asyncio.create_task(
+            execute_job(request, settings, client_id, mode, parameters, contents)
+        )
+        disconnect = asyncio.create_task(wait_for_disconnect(request))
+        try:
+            completed, _ = await asyncio.wait(
+                (work, disconnect), return_when=asyncio.FIRST_COMPLETED
+            )
+            if work in completed:
+                return work.result()
+            disconnect.result()
+            return Response(status_code=499)
+        except HTTPException:
+            raise
+        except TimeoutError as exc:
+            raise HTTPException(
+                504,
+                f"Simulation exceeded the {settings.worker_timeout_seconds}-second worker budget. "
+                "Try a smaller workload.",
+            ) from exc
+        except Exception as exc:
+            logger.error("Simulation failed (%s)", type(exc).__name__)
+            raise HTTPException(500, "Simulation failed") from exc
+        finally:
+            work.cancel()
+            disconnect.cancel()
+            await asyncio.gather(work, disconnect, return_exceptions=True)
+
+
 @router.post("/simulate", dependencies=[Depends(global_sim_limiter.check)])
 async def simulate_workload(
     req: SimulateRequest,
     request: Request,
     settings: Annotated[Settings, Depends(get_settings)],
     client_id: Annotated[str, Depends(verify_api_key)],
-) -> dict[str, Any]:
-    """Run simulation on synthetic seeded workload across TIME and SERVICE splits."""
+) -> Response:
+    """Run a simulation on synthetic seeded workload across TIME and SERVICE splits."""
     require_extended_enabled(req.mode, settings)
-    if req.n_services > settings.SIM_MAX_SERVICES:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                f"Requested n_services ({req.n_services}) exceeds configured "
-                f"SIM_MAX_SERVICES limit ({settings.SIM_MAX_SERVICES})."
-            ),
-        )
-
-    if req.n_steps > settings.SIM_MAX_STEPS:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                f"Requested n_steps ({req.n_steps}) exceeds configured "
-                f"SIM_MAX_STEPS limit ({settings.SIM_MAX_STEPS})."
-            ),
-        )
-
-    extended = req.mode == MODE
-    if extended:
-        check_extended_web_size(req.n_services, req.n_steps)
-    run = run_extended if extended else run_experiment
-    diagnostics = {} if extended else {"include_diagnostics": True}
-    gate_client_id = rate_limiter.extract_client_id(request)
-    if not concurrency_gate.acquire(gate_client_id):
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="A simulation is already active for this client. Please wait for completion.",
-        )
-
-    t_start = time.perf_counter()
-    try:
-        result = await asyncio.wait_for(
-            asyncio.to_thread(
-                run,
-                seed=req.seed,
-                n_services=req.n_services,
-                n_steps=req.n_steps,
-                target_violation=req.target_violation,
-                timeout_seconds=float(settings.SIM_TIMEOUT_SECONDS),
-                **diagnostics,
-            ),
-            timeout=float(settings.SIM_TIMEOUT_SECONDS) + 5.0,
-        )
-        duration_ms = round((time.perf_counter() - t_start) * 1000)
-
-        # Best-effort persist run
-        repo = getattr(request.app.state, "repo", None)
-        saved = False
-        run_record = None
-        if repo is not None:
-            try:
-                run_record = await repo.save_run(
-                    client_id=client_id,
-                    source="simulated",
-                    params={
-                        "seed": req.seed,
-                        "n_services": req.n_services,
-                        "n_steps": req.n_steps,
-                        "target_violation": req.target_violation,
-                        **({"mode": MODE} if extended else {}),
-                    },
-                    status="ok",
-                    result=result,
-                    duration_ms=duration_ms,
-                )
-                await repo.prune(client_id=client_id, keep=50)
-                saved = True
-            except Exception as exc:
-                logger.warning(
-                    "Failed to persist simulation run",
-                    extra={"error": type(exc).__name__, "client_id": client_id},
-                )
-                saved = False
-
-        result["saved"] = saved
-        if run_record and "id" in run_record:
-            result["run_id"] = run_record["id"]
-        return result
-    except TimeoutError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail=f"Simulation timed out after {settings.SIM_TIMEOUT_SECONDS} seconds.",
-        ) from exc
-    except Exception as exc:
-        logger.error("Synthetic simulation failed (%s)", type(exc).__name__)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Simulation failed",
-        ) from exc
-    finally:
-        concurrency_gate.release(gate_client_id)
+    services, steps = settings.simulation_caps(req.mode == MODE)
+    for name, value, cap in (
+        ("n_services", req.n_services, services),
+        ("n_steps", req.n_steps, steps),
+    ):
+        if value > cap:
+            setting = "SIM_EXTENDED_MAX_" if req.mode == MODE else "SIM_MAX_"
+            setting += name.removeprefix("n_").upper()
+            raise HTTPException(422, f"Requested {name} ({value}) exceeds {setting} limit ({cap}).")
+    return await respond_to_simulation(
+        request, settings, client_id, req.mode, req.model_dump(exclude={"mode"})
+    )
 
 
 @router.post("/simulate/csv", dependencies=[Depends(global_sim_limiter.check)])
@@ -283,120 +274,11 @@ async def simulate_csv_workload(
         float | None, Form(alias="target_violation", ge=0.005, le=0.05)
     ] = None,
     mode: Annotated[ExperimentMode, Form()] = "cpu-only",
-) -> dict[str, Any]:
-    """Execute allocation experiment on user-uploaded workload CSV."""
+) -> Response:
+    """Execute an allocation experiment on an uploaded workload CSV."""
     require_extended_enabled(mode, settings)
-    extended = mode == MODE
     if form_target_violation is not None:
         target_violation = form_target_violation
-    contents = await file.read()
-    if len(contents) > MAX_CSV_BYTES:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="Uploaded CSV exceeds the maximum allowed 5 MB payload limit.",
-        )
-
-    try:
-        if extended:
-            workload = parse_extended_csv(contents)
-            n_services, n_steps = workload[0].shape
-        else:
-            workload = load_workload_from_csv(contents)
-            n_services, n_steps = workload.demand.shape
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(exc),
-        ) from exc
-
-    if n_services > settings.SIM_MAX_SERVICES:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                f"CSV contains {n_services} services, exceeding configured "
-                f"SIM_MAX_SERVICES limit ({settings.SIM_MAX_SERVICES})."
-            ),
-        )
-
-    if n_steps > settings.SIM_MAX_STEPS:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                f"CSV contains {n_steps} time steps, exceeding configured "
-                f"SIM_MAX_STEPS limit ({settings.SIM_MAX_STEPS})."
-            ),
-        )
-
-    if extended:
-        check_extended_web_size(n_services, n_steps)
-    run = run_extended if extended else run_experiment
-    diagnostics = {} if extended else {"include_diagnostics": True}
-    gate_client_id = rate_limiter.extract_client_id(request)
-    if not concurrency_gate.acquire(gate_client_id):
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="A simulation is already active for this client. Please wait for completion.",
-        )
-
-    t_start = time.perf_counter()
-    try:
-        result = await asyncio.wait_for(
-            asyncio.to_thread(
-                run,
-                seed=42,
-                n_services=n_services,
-                n_steps=n_steps,
-                target_violation=target_violation,
-                timeout_seconds=float(settings.SIM_TIMEOUT_SECONDS),
-                workload=workload,
-                **diagnostics,
-            ),
-            timeout=float(settings.SIM_TIMEOUT_SECONDS) + 5.0,
-        )
-        duration_ms = round((time.perf_counter() - t_start) * 1000)
-
-        # Best-effort persist run without saving CSV content or file names
-        repo = getattr(request.app.state, "repo", None)
-        saved = False
-        run_record = None
-        if repo is not None:
-            try:
-                run_record = await repo.save_run(
-                    client_id=client_id,
-                    source="csv",
-                    params={
-                        "n_services": n_services,
-                        "n_steps": n_steps,
-                        "target_violation": target_violation,
-                        **({"mode": MODE} if extended else {}),
-                    },
-                    status="ok",
-                    result=result,
-                    duration_ms=duration_ms,
-                )
-                await repo.prune(client_id=client_id, keep=50)
-                saved = True
-            except Exception as exc:
-                logger.warning(
-                    "Failed to persist CSV simulation run",
-                    extra={"error": type(exc).__name__, "client_id": client_id},
-                )
-                saved = False
-
-        result["saved"] = saved
-        if run_record and "id" in run_record:
-            result["run_id"] = run_record["id"]
-        return result
-    except TimeoutError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail=f"Simulation timed out after {settings.SIM_TIMEOUT_SECONDS} seconds.",
-        ) from exc
-    except Exception as exc:
-        logger.error("CSV simulation failed (%s)", type(exc).__name__)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Simulation failed",
-        ) from exc
-    finally:
-        concurrency_gate.release(gate_client_id)
+    return await respond_to_simulation(
+        request, settings, client_id, mode, {"seed": 42, "target_violation": target_violation}, file
+    )

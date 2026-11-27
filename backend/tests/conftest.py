@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import json
+from unittest.mock import patch
+
 import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Settings, get_settings
 from app.main import create_app
-from app.ratelimit import rate_limiter
+from app.ratelimit import global_sim_limiter, rate_limiter
 
 TEST_VALID_KEY = "test_key_with_a_length_of_at_least_32_characters_for_cloudpilot"
 
@@ -24,8 +27,17 @@ def isolate_settings_from_dotenv(monkeypatch: pytest.MonkeyPatch):
 def reset_rate_limiter():
     """Reset the in-memory sliding window rate limiter before each test."""
     rate_limiter.reset()
+    global_sim_limiter.reset()
     yield
     rate_limiter.reset()
+    global_sim_limiter.reset()
+
+
+def mock_simulation(result: dict):
+    async def run(settings, mode, max_services, max_steps, parameters, contents):
+        return json.dumps({"parameters": parameters, **result}).encode()
+
+    return patch("app.simulation_process.SimulationProcesses.run", side_effect=run)
 
 
 @pytest.fixture

@@ -13,7 +13,9 @@ RANDOM_STATE = 42
 MAX_TRAIN_SAMPLES = 200_000
 
 
-def get_model_instances(n_estimators_override: int | None = None) -> dict[str, Any]:
+def get_model_instances(
+    n_estimators_override: int | None = None, rf_jobs: int = -1
+) -> dict[str, Any]:
     """Instantiate the standard evaluation models with fixed random state."""
     rf_trees = n_estimators_override if n_estimators_override is not None else 100
     gb_trees = n_estimators_override if n_estimators_override is not None else 200
@@ -30,7 +32,7 @@ def get_model_instances(n_estimators_override: int | None = None) -> dict[str, A
             max_depth=12,
             min_samples_leaf=20,
             random_state=RANDOM_STATE,
-            n_jobs=-1,
+            n_jobs=rf_jobs,
         ),
         "GB": GradientBoostingRegressor(
             loss="squared_error",
