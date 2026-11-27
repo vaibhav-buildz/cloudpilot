@@ -16,6 +16,7 @@ from app.db.repository import (
     SupabaseRunRepository,
 )
 from app.main import create_app
+from tests.conftest import mock_simulation
 
 KEY_A = "a" * 32
 KEY_B = "b" * 32
@@ -167,7 +168,7 @@ async def test_supabase_repository_mock_transport_crud() -> None:
         params={"seed": 42},
         status="ok",
     )
-    assert saved["id"] == "11111111-1111-1111-1111-111111111111"
+    assert saved["id"] == json.loads(recorded_requests[-1].content)["id"]
     assert recorded_requests[-1].method == "POST"
 
     # List
@@ -221,6 +222,52 @@ async def test_supabase_repository_retry_on_500() -> None:
     items = await repo.list_runs("client_a")
     assert len(items) == 1
     assert call_count == 2  # Proves retry occurred
+
+
+@pytest.mark.anyio
+async def test_save_replays_same_insert_id_after_lost_commit_response():
+    writes = []
+    stored = {}
+
+    def handler(request):
+        if request.method == "POST":
+            record = json.loads(request.content)
+            writes.append(record["id"])
+            assert request.url.params["on_conflict"] == "id"
+            assert "resolution=ignore-duplicates" in request.headers["Prefer"]
+            if record["id"] not in stored:
+                stored[record["id"]] = record
+                raise httpx.ReadTimeout("response lost after commit", request=request)
+            return httpx.Response(201, json=[])
+        assert request.url.params["client_id"] == "eq.visitor"
+        assert request.url.params["id"] == f"eq.{writes[0]}"
+        assert "result" not in request.url.params["select"]
+        return httpx.Response(200, json=[{"id": writes[0]}])
+
+    async with httpx.AsyncClient(
+        base_url="https://mock.supabase.co", transport=httpx.MockTransport(handler)
+    ) as client:
+        repo = SupabaseRunRepository("https://mock.supabase.co", SECRET_KEY, client)
+        result = await repo.save_run("visitor", "simulated", {}, "ok", result={"data": 1})
+    assert len(writes) == 2 and len(stored) == 1
+    assert result["id"] == writes[0] == writes[1]
+
+
+def test_saved_run_survives_prune_failure(client):
+    with (
+        mock_simulation({"time_split": {}}),
+        patch.object(client.app.state.repo, "prune", side_effect=RuntimeError),
+    ):
+        headers = {"X-API-Key": KEY_A}
+        settings = client.app.state.settings
+        headers["X-API-Key"] = settings.CLOUDPILOT_API_KEY
+        response = client.post("/api/simulate", json={}, headers=headers)
+        result = response.json()
+        assert result["saved"]
+        summaries = client.get("/api/runs", headers=headers).json()
+        assert summaries[0]["id"] == result["run_id"] and summaries[0]["result"] is None
+        detail = client.get(f"/api/runs/{result['run_id']}", headers=headers).json()
+        assert detail["result"]["time_split"] == {}
 
 
 @pytest.mark.anyio
@@ -356,7 +403,7 @@ def test_db_down_ready_returns_503_and_simulation_returns_saved_false() -> None:
 
     # /api/simulate still works and returns simulation result with saved=False
     with (
-        patch("app.routes.simulate.run_experiment", return_value=mock_sim_result),
+        mock_simulation(mock_sim_result),
         patch.object(repo, "save_run", side_effect=RuntimeError("DB is offline")),
     ):
         res_sim = client.post(

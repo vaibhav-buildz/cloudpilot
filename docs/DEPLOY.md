@@ -21,7 +21,11 @@ All variable names match [backend/app/config.py](../backend/app/config.py) and [
 | `GLOBAL_SIM_PER_MIN` | Render / Local | No | Global `/api/simulate*` cap across all clients (default `20`). |
 | `SIM_MAX_STEPS` | Render / Local | No | Max time steps per simulation (default `1000`). |
 | `SIM_MAX_SERVICES` | Render / Local | No | Max services per simulation (default `20`). |
-| `SIM_TIMEOUT_SECONDS` | Render / Local | No | Simulation execution timeout (`50` in `render.yaml`, default `60`). |
+| `SIM_TIMEOUT_SECONDS` | Render / Local | No | Worker startup, CSV parsing, engine, and encoding budget. Defaults to `42` seconds and is capped at `42` in production. |
+| `SIM_MAX_CONCURRENT` | Render / Local | No | Simultaneous simulation requests per Uvicorn process (default `1`). Excess requests receive a busy response immediately. |
+| `SIM_RF_JOBS`, `SIM_NATIVE_THREADS` | Render / Local | No | Random Forest jobs and BLAS/OpenMP threads per web worker (both default to `1`). |
+| `ENABLE_PRODUCTION_EXTENDED_SIMULATION` | Render | No | Extended-v1 API opt-in. Keep this `false` until hosted verification passes. |
+| `SIM_EXTENDED_MAX_SERVICES`, `SIM_EXTENDED_MAX_STEPS` | Render / Local | No | Independent extended caps (default `4` services and `600` steps). Local opt-in uses `ENABLE_EXTENDED_SIMULATION`. |
 | `SUPABASE_URL` | Render / Local | No | `https://<project-ref>.supabase.co` (HTTPS required in production). |
 | `SUPABASE_SERVICE_KEY` | Render / Local | Yes | Supabase service role / secret key for PostgREST. |
 | `BACKEND_URL` | Vercel / Local | No | Render backend base URL (`https://...`), used server-side by proxy. |
@@ -72,6 +76,6 @@ All 6 checks (`health`, `ready`, `auth_required`, `proxy_simulate_and_readback`,
 
 ## Render Free-Tier Cold Starts & Proxy Timeout Behavior
 
-- **Render Free-Tier Cold Starts**: Render free web services spin down after inactivity. The first request after idle spin-down can take up to ~50 seconds to wake the container.
-- **Vercel Proxy Timeout**: The Vercel serverless proxy ([frontend/api/[...path].ts](../frontend/api/%5B...path%5D.ts)) enforces a **55-second** `AbortController` timeout (just under the 60-second Vercel Hobby function limit) and returns `504 Gateway Timeout` if the upstream backend does not respond in time.
-- **No Automatic Proxy Retry**: The proxy does not automatically retry failed or timed-out requests (to avoid duplicate `POST /api/simulate` executions). If the first request hits a cold-start `504`, wait a few seconds for Render to finish booting or hit `/health` first, then retry.
+- Render documents a roughly one-minute wake-up after idle spin-down. Warm the backend with `GET /health` before running the production smoke scripts. [Render free services](https://render.com/docs/free)
+- The backend allows 42 seconds for the worker, four seconds for save confirmation, and two seconds for pruning. The proxy covers the complete upstream response for 55 seconds, leaving about seven seconds for transport and backend response handling. Vercel allows the function 60 seconds total. [Vercel proxy](../frontend/api/%5B...path%5D.ts)
+- Customers can retry after the backend wakes or a busy slot clears. The proxy aborts the upstream request on disconnect and leaves retries to the client. For rollout and rollback details, see [Phase 5 verification](phase5.md).

@@ -23,7 +23,19 @@ services:
       - key: SIM_MAX_SERVICES
         value: "20"
       - key: SIM_TIMEOUT_SECONDS
-        value: "50"
+        value: "42"
+      - key: SIM_MAX_CONCURRENT
+        value: "1"
+      - key: SIM_RF_JOBS
+        value: "1"
+      - key: SIM_NATIVE_THREADS
+        value: "1"
+      - key: ENABLE_PRODUCTION_EXTENDED_SIMULATION
+        value: "false"
+      - key: SIM_EXTENDED_MAX_SERVICES
+        value: "4"
+      - key: SIM_EXTENDED_MAX_STEPS
+        value: "600"
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_KEY

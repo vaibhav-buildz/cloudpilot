@@ -11,8 +11,7 @@ from fastapi.testclient import TestClient
 from app.config import Settings
 from app.engine.runner import run_experiment
 from app.main import create_app
-from app.routes.simulate import concurrency_gate
-from tests.conftest import TEST_VALID_KEY
+from tests.conftest import TEST_VALID_KEY, mock_simulation
 
 
 def test_methods_endpoint_requires_auth(client: TestClient):
@@ -70,9 +69,7 @@ def test_simulate_concurrent_request_returns_429():
     from app.security import hash_client_key
 
     client_key_hash = f"key:{hash_client_key(TEST_VALID_KEY)}"
-    concurrency_gate.acquire(client_key_hash)
-
-    try:
+    with client.app.state.simulations.admit(client_key_hash):
         res = client.post(
             "/api/simulate",
             json={"seed": 42, "n_services": 4, "n_steps": 600},
@@ -80,8 +77,6 @@ def test_simulate_concurrent_request_returns_429():
         )
         assert res.status_code == 429
         assert "already active" in res.json()["detail"]
-    finally:
-        concurrency_gate.release(client_key_hash)
 
 
 def test_simulate_csv_rejects_bad_files(client: TestClient):
@@ -123,7 +118,7 @@ def test_simulate_returns_200_with_expected_keys(client: TestClient):
         "h3": {"verdict": "SUPPORTED", "threshold": 0.015},
     }
 
-    with patch("app.routes.simulate.run_experiment", return_value=mock_response):
+    with mock_simulation(mock_response):
         res = client.post(
             "/api/simulate",
             json={"seed": 42, "n_services": 4, "n_steps": 600},
@@ -139,7 +134,7 @@ def test_simulate_returns_200_with_expected_keys(client: TestClient):
 
 @pytest.mark.parametrize(("field", "value"), [("n_steps", 481), ("n_services", 2), ("seed", -1)])
 def test_simulate_rejects_invalid_engine_inputs(client: TestClient, field: str, value: int):
-    with patch("app.routes.simulate.run_experiment") as runner:
+    with patch("app.simulation_process.SimulationProcesses.run") as runner:
         res = client.post(
             "/api/simulate",
             json={"seed": 42, "n_services": 3, "n_steps": 482, field: value},
@@ -159,15 +154,13 @@ def test_simulate_csv_rejects_invalid_engine_inputs(client, services, steps, dem
     rows.extend(
         f"svc-{service},{step:04},{demand}" for service in range(services) for step in range(steps)
     )
-    with patch("app.routes.simulate.run_experiment") as runner:
-        res = client.post(
-            "/api/simulate/csv",
-            files={"file": ("workload.csv", "\n".join(rows), "text/csv")},
-            headers={"X-API-Key": TEST_VALID_KEY},
-        )
+    res = client.post(
+        "/api/simulate/csv",
+        files={"file": ("workload.csv", "\n".join(rows), "text/csv")},
+        headers={"X-API-Key": TEST_VALID_KEY},
+    )
     assert res.status_code == 422
     assert message in res.json()["detail"]
-    runner.assert_not_called()
 
 
 def test_minimum_workload_completes_both_splits():
@@ -183,7 +176,7 @@ def test_minimum_workload_completes_both_splits():
 def test_csv_uses_requested_target_violation(client, query, form, expected):
     rows = ["service_id,timestamp,cpu_demand"]
     rows.extend(f"svc-{service},{step:04},1" for service in range(3) for step in range(482))
-    with patch("app.routes.simulate.run_experiment", return_value={}) as runner:
+    with mock_simulation({}) as runner:
         res = client.post(
             f"/api/simulate/csv{query}",
             data=form,
@@ -191,11 +184,13 @@ def test_csv_uses_requested_target_violation(client, query, form, expected):
             headers={"X-API-Key": TEST_VALID_KEY},
         )
     assert res.status_code == 200
-    assert runner.call_args.kwargs["target_violation"] == expected
+    assert runner.call_args.args[4]["target_violation"] == expected
 
 
 def test_simulation_internal_error_hides_exception_text(client):
-    with patch("app.routes.simulate.run_experiment", side_effect=RuntimeError("internal data")):
+    with patch(
+        "app.simulation_process.SimulationProcesses.run", side_effect=RuntimeError("internal data")
+    ):
         res = client.post("/api/simulate", json={}, headers={"X-API-Key": TEST_VALID_KEY})
     assert res.status_code == 500
     assert res.json() == {"detail": "Simulation failed"}

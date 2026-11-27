@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
-from math import ceil
-
 import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view
+
+from app.workload_limits import MIN_HISTORY_REQUIRED as MIN_HISTORY_REQUIRED
+from app.workload_limits import MIN_WORKLOAD_SERVICES as MIN_WORKLOAD_SERVICES
+from app.workload_limits import MIN_WORKLOAD_STEPS as MIN_WORKLOAD_STEPS
+from app.workload_limits import TIME_TRAIN_FRACTION as TIME_TRAIN_FRACTION
 
 LAGS = [1, 2, 3, 6, 12, 288]
 ROLLING_WINDOWS = [12, 48]
-MIN_HISTORY_REQUIRED = 288
-TIME_TRAIN_FRACTION = 0.60
-# TIME training must include at least one target after the feature warm-up.
-MIN_WORKLOAD_STEPS = ceil((MIN_HISTORY_REQUIRED + 1) / TIME_TRAIN_FRACTION)
-MIN_WORKLOAD_SERVICES = 3  # One service per disjoint SERVICE partition.
 STEPS_PER_DAY = 288
 
 FEATURE_NAMES = [
@@ -111,21 +110,32 @@ def build_dataset(
             np.empty(0, dtype=int),
         )
 
-    all_X_by_t = []
-    for t in range(start_step, end_step):
-        X_t = extract_features_at_t(demand, t)  # (total_services, n_features)
-        all_X_by_t.append(X_t[selected_services])  # (n_srv, n_features)
+    if start_step < MIN_HISTORY_REQUIRED:
+        raise ValueError(f"Dataset requires at least {MIN_HISTORY_REQUIRED} steps of history.")
+    if end_step > total_steps:
+        raise ValueError("Dataset ends beyond the available workload.")
 
-    # Stack along time axis: shape (n_t, n_srv, n_features)
-    X_time_major = np.stack(all_X_by_t, axis=0)
+    times = np.arange(start_step, end_step)
+    radians = 2.0 * np.pi * (times % STEPS_PER_DAY) / STEPS_PER_DAY
+    features = np.empty((n_srv, n_t, len(FEATURE_NAMES)), dtype=np.result_type(demand, float))
+    features[:, :, -2] = np.sin(radians)
+    features[:, :, -1] = np.cos(radians)
+    for service, rows in zip(selected_services, features, strict=True):
+        history = demand[service]
+        for column, lag in enumerate(LAGS):
+            rows[:, column] = history[start_step - lag : end_step - lag]
+        # A window is a view, and the std temporary is bounded to one service.
+        for index, window in enumerate(ROLLING_WINDOWS):
+            windows = sliding_window_view(history[start_step - window : end_step - 1], window)
+            column = len(LAGS) + 3 * index
+            rows[:, column] = windows.mean(axis=1)
+            rows[:, column + 1] = windows.max(axis=1)
+            rows[:, column + 2] = windows.std(axis=1)
 
-    # Reorder to canonical service-major: (n_srv, n_t, n_features) -> (n_srv * n_t, n_features)
-    X = np.swapaxes(X_time_major, 0, 1).reshape(n_srv * n_t, len(FEATURE_NAMES))
-
-    # Target demand: slice shape (n_srv, n_t) and flatten in C-order
-    y = demand[selected_services, start_step:end_step].flatten()
+    X = features.reshape(n_srv * n_t, len(FEATURE_NAMES))
+    y = demand[selected_services, start_step:end_step].reshape(-1)
 
     srv_idx = np.repeat(selected_services, n_t)
-    t_idx = np.tile(np.arange(start_step, end_step), n_srv)
+    t_idx = np.tile(times, n_srv)
 
     return X, y, srv_idx, t_idx

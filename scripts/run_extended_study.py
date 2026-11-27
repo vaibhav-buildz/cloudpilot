@@ -9,8 +9,11 @@ import os
 import platform
 import sys
 import tempfile
+from contextlib import nullcontext
 from importlib.metadata import version
 from pathlib import Path
+
+from threadpoolctl import threadpool_limits
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
@@ -21,12 +24,17 @@ FULL_CONFIG = {"n_services": 200, "n_steps": 4032, "target_violation": 0.01}
 
 
 def canonical_json(value: object) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode()
 
 
-def study_provenance() -> dict:
+def study_provenance(rf_jobs: int = -1, native_threads: int | None = None) -> dict:
     engine = ROOT / "backend/app/engine"
-    sources = sorted(engine.glob("*.py")) + [Path(__file__).resolve()]
+    sources = sorted(engine.glob("*.py")) + [
+        ROOT / "backend/app/workload_limits.py",
+        Path(__file__).resolve(),
+    ]
     return {
         "protocol": "extended-v1",
         "seeds": list(range(1, 11)),
@@ -35,7 +43,11 @@ def study_provenance() -> dict:
         "diagnostics": False,
         "timeout_seconds_per_seed": 7200,
         "python": platform.python_version(),
-        "dependencies": {name: version(name) for name in ("numpy", "scipy", "scikit-learn")},
+        "dependencies": {
+            name: version(name)
+            for name in ("numpy", "scipy", "scikit-learn", "threadpoolctl")
+        },
+        "execution_profile": {"rf_jobs": rf_jobs, "native_threads": native_threads},
         "sources": {
             p.relative_to(ROOT).as_posix(): hashlib.sha256(
                 p.read_bytes().replace(b"\r\n", b"\n")
@@ -84,17 +96,44 @@ def read_checkpoint(path: Path, seed: int, provenance: dict) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group()
-    source.add_argument("--full", action="store_true", help="Run the ten-seed offline study.")
-    source.add_argument("--csv", type=Path, help="Run one aligned CPU and memory workload.")
+    source.add_argument(
+        "--full", action="store_true", help="Run the ten-seed offline study."
+    )
+    source.add_argument(
+        "--csv", type=Path, help="Run one aligned CPU and memory workload."
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--resume", action="store_true", help="Reuse verified full-study seeds.")
+    parser.add_argument(
+        "--resume", action="store_true", help="Reuse verified full-study seeds."
+    )
+    parser.add_argument(
+        "--seed", type=int, choices=range(1, 11), help="Run one full-study seed."
+    )
+    parser.add_argument(
+        "--rf-jobs", type=int, default=-1, help="Random Forest job count."
+    )
+    parser.add_argument(
+        "--native-threads", type=int, help="Limit BLAS and OpenMP thread pools."
+    )
     args = parser.parse_args()
     if args.resume and not args.full:
         parser.error("--resume requires --full")
-    seeds = list(range(1, 11)) if args.full else [42]
+    if args.seed is not None and not args.full:
+        parser.error("--seed requires --full")
+    if args.rf_jobs < -1 or args.rf_jobs == 0:
+        parser.error("--rf-jobs must be -1 or positive")
+    if args.native_threads is not None and args.native_threads < 1:
+        parser.error("--native-threads must be positive")
+    seeds = (
+        [args.seed]
+        if args.seed is not None
+        else (list(range(1, 11)) if args.full else [42])
+    )
     data = parse_extended_csv(args.csv.read_bytes()) if args.csv else None
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    provenance = study_provenance() if args.full else None
+    provenance = (
+        study_provenance(args.rf_jobs, args.native_threads) if args.full else None
+    )
     for seed in seeds:
         path = args.output_dir / f"extended_v1_seed_{seed}.json"
         if path.exists():
@@ -109,20 +148,29 @@ def main() -> None:
             )
             continue
         print(f"Seed {seed}: running", flush=True)
-        result = run_extended(
-            seed=seed,
-            n_services=200 if args.full else 4,
-            n_steps=4032 if args.full else 600,
-            timeout_seconds=7200 if args.full else 120,
-            workload=data,
-            diagnostics=not args.full,
+        limits = (
+            threadpool_limits(args.native_threads)
+            if args.native_threads
+            else nullcontext()
         )
+        with limits:
+            result = run_extended(
+                seed=seed,
+                n_services=200 if args.full else 4,
+                n_steps=4032 if args.full else 600,
+                timeout_seconds=7200 if args.full else 120,
+                workload=data,
+                diagnostics=not args.full,
+                rf_jobs=args.rf_jobs,
+            )
         if provenance is None:
             with path.open("x", encoding="utf-8") as stream:
                 json.dump(result, stream, allow_nan=False, separators=(",", ":"))
         else:
             write_checkpoint(path, result, provenance)
-        print(f"Seed {seed}: {result['execution_time_seconds']} s, {path.stat().st_size} bytes")
+        print(
+            f"Seed {seed}: {result['execution_time_seconds']} s, {path.stat().st_size} bytes"
+        )
 
 
 if __name__ == "__main__":

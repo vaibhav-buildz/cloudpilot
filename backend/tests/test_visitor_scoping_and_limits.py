@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import uuid
-from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -11,7 +10,7 @@ from app.config import Settings
 from app.engine.csv_loader import MAX_CSV_BYTES
 from app.main import create_app
 from app.ratelimit import global_sim_limiter, rate_limiter
-from tests.conftest import TEST_VALID_KEY
+from tests.conftest import TEST_VALID_KEY, mock_simulation
 
 VISITOR_1 = "11111111-1111-4111-8111-111111111111"
 VISITOR_2 = "22222222-2222-4222-8222-222222222222"
@@ -33,7 +32,7 @@ def test_two_visitors_have_separate_history() -> None:
 
     # Save run for Visitor 1
     mock_result_1 = {"id": "v1_result", "time_split": {}, "service_split": {}, "h3": {}}
-    with patch("app.routes.simulate.run_experiment", return_value=mock_result_1):
+    with mock_simulation(mock_result_1):
         res_v1 = client.post(
             "/api/simulate",
             json={"seed": 1, "n_services": 4, "n_steps": 600},
@@ -45,7 +44,7 @@ def test_two_visitors_have_separate_history() -> None:
 
     # Save run for Visitor 2
     mock_result_2 = {"id": "v2_result", "time_split": {}, "service_split": {}, "h3": {}}
-    with patch("app.routes.simulate.run_experiment", return_value=mock_result_2):
+    with mock_simulation(mock_result_2):
         res_v2 = client.post(
             "/api/simulate",
             json={"seed": 2, "n_services": 4, "n_steps": 600},
@@ -197,7 +196,7 @@ def test_global_simulation_limiter_returns_429() -> None:
 
     mock_res = {"time_split": {}, "service_split": {}, "h3": {}}
 
-    with patch("app.routes.simulate.run_experiment", return_value=mock_res):
+    with mock_simulation(mock_res):
         # Request 1 from Visitor 1
         res1 = client.post(
             "/api/simulate",

@@ -8,6 +8,13 @@ from typing import Literal
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.workload_limits import (
+    EXTENDED_MAX_SERVICES,
+    EXTENDED_MAX_STEPS,
+    MIN_WORKLOAD_SERVICES,
+    MIN_WORKLOAD_STEPS,
+)
+
 
 class Settings(BaseSettings):
     """CloudPilot backend configuration."""
@@ -27,9 +34,18 @@ class Settings(BaseSettings):
     # Simulation engine limits
     SIM_MAX_STEPS: int = Field(default=1000, ge=1)
     SIM_MAX_SERVICES: int = Field(default=20, ge=1)
-    SIM_TIMEOUT_SECONDS: int = Field(default=60, ge=1)
+    SIM_TIMEOUT_SECONDS: int = Field(default=42, ge=1)
+    SIM_MAX_CONCURRENT: int = Field(default=1, ge=1)
+    SIM_RF_JOBS: int = Field(default=1, ge=1)
+    SIM_NATIVE_THREADS: int = Field(default=1, ge=1)
+    SIM_MAX_RESULT_BYTES: int = Field(default=2_000_000, ge=1, le=4_000_000)
     GLOBAL_SIM_PER_MIN: int = Field(default=20, ge=1)
     ENABLE_EXTENDED_SIMULATION: bool = False
+    ENABLE_PRODUCTION_EXTENDED_SIMULATION: bool = False
+    SIM_EXTENDED_MAX_SERVICES: int = Field(
+        default=4, ge=MIN_WORKLOAD_SERVICES, le=EXTENDED_MAX_SERVICES
+    )
+    SIM_EXTENDED_MAX_STEPS: int = Field(default=600, ge=MIN_WORKLOAD_STEPS, le=EXTENDED_MAX_STEPS)
 
     # Optional Supabase integration for traces & persistence
     SUPABASE_URL: str | None = None
@@ -77,7 +93,23 @@ class Settings(BaseSettings):
 
     @property
     def extended_simulation_enabled(self) -> bool:
-        return self.APP_ENV == "development" and self.ENABLE_EXTENDED_SIMULATION
+        if self.APP_ENV == "production":
+            return self.ENABLE_PRODUCTION_EXTENDED_SIMULATION
+        return self.ENABLE_EXTENDED_SIMULATION
+
+    def simulation_caps(self, extended: bool) -> tuple[int, int]:
+        if extended:
+            return self.SIM_EXTENDED_MAX_SERVICES, self.SIM_EXTENDED_MAX_STEPS
+        return self.SIM_MAX_SERVICES, self.SIM_MAX_STEPS
+
+    @property
+    def worker_timeout_seconds(self) -> int:
+        # Existing Render instances may retain an older dashboard environment value.
+        return (
+            min(self.SIM_TIMEOUT_SECONDS, 42)
+            if self.APP_ENV == "production"
+            else self.SIM_TIMEOUT_SECONDS
+        )
 
     def is_ready(self) -> tuple[bool, str]:
         """Readiness check verifying current configuration state."""

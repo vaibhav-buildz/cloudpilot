@@ -23,6 +23,8 @@ async function readBodyBuffer(
       bytes += chunk.length;
       if (bytes > MAX_BODY_BYTES) {
         exceeded = true;
+        chunks.length = 0;
+        return;
       }
       chunks.push(chunk);
     });
@@ -34,6 +36,7 @@ async function readBodyBuffer(
     req.on("error", (err) => {
       reject(err);
     });
+    req.on("aborted", () => reject(new Error("Client disconnected")));
   });
 }
 
@@ -176,6 +179,9 @@ export default async function handler(
 
   // Upstream dispatch with 55s timeout
   const controller = new AbortController();
+  const disconnect = () => controller.abort();
+  res.once("close", disconnect);
+  if (res.destroyed) disconnect();
   const timeoutTimer = setTimeout(() => {
     controller.abort();
   }, 55000);
@@ -187,8 +193,6 @@ export default async function handler(
       body: bodyBuffer,
       signal: controller.signal,
     });
-    clearTimeout(timeoutTimer);
-
     res.statusCode = upstreamRes.status;
     const contentType = upstreamRes.headers.get("content-type");
     if (contentType) {
@@ -202,12 +206,14 @@ export default async function handler(
     const resArrayBuffer = await upstreamRes.arrayBuffer();
     res.end(Buffer.from(resArrayBuffer));
   } catch (err: unknown) {
-    clearTimeout(timeoutTimer);
+    if (res.destroyed) return;
     if (err instanceof Error && err.name === "AbortError") {
       res.statusCode = 504;
       res.setHeader("Content-Type", "application/json");
       res.end(
-        JSON.stringify({ detail: "Gateway Timeout: upstream processing timed out" })
+        JSON.stringify({
+          detail: "The backend did not respond in time. If it was idle, wait for it to start and try again.",
+        })
       );
       return;
     }
@@ -217,5 +223,8 @@ export default async function handler(
     res.end(
       JSON.stringify({ detail: "Bad Gateway: upstream service unavailable" })
     );
+  } finally {
+    clearTimeout(timeoutTimer);
+    res.off("close", disconnect);
   }
 }

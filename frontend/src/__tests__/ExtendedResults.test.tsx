@@ -86,7 +86,7 @@ const result: ExtendedResponse = {
 };
 
 describe("extended experiments", () => {
-  it("keeps the extended option disabled until the API advertises local limits", () => {
+  it("shows the extended option when the API advertises limits", () => {
     const limits = {
       max_services: 20,
       max_steps: 1000,
@@ -103,8 +103,8 @@ describe("extended experiments", () => {
       />,
     );
     expect(
-      screen.getByRole("option", { name: /extended cpu/i }),
-    ).toBeDisabled();
+      screen.queryByRole("option", { name: /extended cpu/i }),
+    ).not.toBeInTheDocument();
     rerender(
       <ExperimentModeField
         mode="cpu-only"

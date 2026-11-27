@@ -74,7 +74,7 @@ cloudpilot/
 | `RATE_LIMIT_PER_MIN` | integer | `30` | No | In-memory sliding window rate limit per client per minute on `/api` routes. |
 | `SIM_MAX_STEPS` | integer | `1000` | No | Maximum discrete time steps for simulation runs. |
 | `SIM_MAX_SERVICES` | integer | `20` | No | Maximum concurrent services simulated. |
-| `SIM_TIMEOUT_SECONDS` | integer | `60` | No | Timeout in seconds for simulation execution. |
+| `SIM_TIMEOUT_SECONDS` | integer | `42` | No | Hard worker deadline in seconds, including startup and result encoding. |
 | `SUPABASE_URL` | string | None | Yes | Supabase project URL (`https://` scheme required in production). |
 | `SUPABASE_SERVICE_KEY` | string | None | Yes | Supabase service role API key for PostgREST control-plane access. |
 

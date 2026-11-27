@@ -8,7 +8,7 @@ import io
 import time
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
-from math import isfinite
+from math import ceil, isfinite
 
 import numpy as np
 
@@ -18,12 +18,10 @@ from app.engine.features import MIN_HISTORY_REQUIRED, MIN_WORKLOAD_SERVICES, MIN
 from app.engine.generator import generate_workload
 from app.engine.runner import _check_deadline, run_split_pipeline
 from app.engine.task_scheduler import INTERVAL_SECONDS, Task, run_service, task_metrics
+from app.workload_limits import EXTENDED_MAX_SERVICES as MAX_SERVICES
+from app.workload_limits import EXTENDED_MAX_STEPS as MAX_STEPS
 
 MODE = "extended-v1"
-MAX_SERVICES = 200
-MAX_STEPS = 4032
-WEB_MAX_SERVICES = 4
-WEB_MAX_STEPS = 600
 MAX_RESOURCE_VALUE = 65_536
 REQUIRED_COLUMNS = ("service_id", "timestamp", "cpu_demand", "memory_demand_gib")
 
@@ -167,7 +165,7 @@ def simulate_policy(
         backlog += service_backlog
         for state in service_states:
             if state.completion is not None:
-                step = max(0, int(np.ceil(state.completion / INTERVAL_SECONDS)) - 1)
+                step = max(0, ceil(state.completion / INTERVAL_SECONDS) - 1)
                 completed_by_step[step] += 1
     summary = task_metrics(states, backlog.tolist(), len(backlog) * INTERVAL_SECONDS)
     cpu_capacity = float(cpu.sum()) * INTERVAL_SECONDS
@@ -218,6 +216,7 @@ def evaluate_resources(
     split: dict,
     n_estimators_override: int | None,
     diagnostics: bool,
+    rf_jobs: int = -1,
 ) -> dict:
     validation_cpu = {}
     test_cpu = {}
@@ -234,29 +233,35 @@ def evaluate_resources(
         deadline=deadline,
         n_estimators_override=n_estimators_override,
         include_diagnostics=diagnostics,
+        include_service_metrics=False,
+        rf_jobs=rf_jobs,
     )
     cpu_result = run_split_pipeline(
         cpu, causal_reference(cpu), **common, observe_allocations=collect_cpu
     )
     tasks = offered_tasks(cpu, memory, split["test_services"], split["test_start"], seed)
-    digest = hashlib.sha256(
-        "\n".join(repr(task) for service in tasks for task in service).encode()
-    ).hexdigest()
+    digest = hashlib.sha256()
+    for index, jobs in enumerate(tasks):
+        if index:
+            digest.update(b"\n")
+        digest.update("\n".join(map(repr, jobs)).encode())
     shape = (len(tasks), len(tasks[0]))
     policies = {}
 
     def compare_memory(name, validation, test, allocation):
         if name not in validation_cpu:
             return
-        val_rate = float(np.mean(validation_cpu[name] | validation))
+        val_rate = float(np.mean(validation_cpu.pop(name) | validation))
         feasible = val_rate <= target
+        cpu_violations = test_cpu.pop(name)
+        cpu_allocation = allocations_cpu.pop(name)
         policies[name] = {
             "validation_joint_violation_rate": val_rate,
-            "test_joint_violation_rate": float(np.mean(test_cpu[name] | test)),
+            "test_joint_violation_rate": float(np.mean(cpu_violations | test)),
             "jointly_feasible": feasible,
             "tasks": simulate_policy(
                 tasks,
-                allocations_cpu[name].reshape(shape),
+                cpu_allocation.reshape(shape),
                 allocation.reshape(shape),
                 deadline,
             )
@@ -271,12 +276,7 @@ def evaluate_resources(
         observe_allocations=compare_memory,
     )
     for result in (cpu_result, memory_result):
-        for name, metrics in result["methods"].items():
-            for key in tuple(metrics):
-                if key.startswith("per_service"):
-                    del metrics[key]
-            if name == "static":
-                metrics.update(mae=None, mse=None, rmse=None)
+        result["methods"]["static"].update(mae=None, mse=None, rmse=None)
     for name in cpu_result["methods"]:
         policies.setdefault(
             name,
@@ -291,7 +291,7 @@ def evaluate_resources(
         "cpu": cpu_result,
         "memory": memory_result,
         "policies": policies,
-        "offered_tasks_sha256": digest,
+        "offered_tasks_sha256": digest.hexdigest(),
         "offered_tasks": sum(map(len, tasks)),
     }
 
@@ -305,6 +305,7 @@ def run_extended(
     workload: tuple[np.ndarray, np.ndarray] | None = None,
     n_estimators_override: int | None = None,
     diagnostics: bool = True,
+    rf_jobs: int = -1,
 ) -> dict:
     started = time.time()
     deadline = started + timeout_seconds
@@ -358,6 +359,7 @@ def run_extended(
             split,
             n_estimators_override,
             diagnostics,
+            rf_jobs,
         )
         for key, split in splits.items()
     }
