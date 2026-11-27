@@ -18,13 +18,13 @@ Separate baseline stage-timed runs measured the following. These are elapsed sta
 - **CPU-only web maximum.** Workload generation 0.004, features 0.159, fitting 26.299, inference 0.224, margin selection 0.029, rolling p99 0.272, bootstrap 0.005, diagnostic construction 0.004, JSON encoding 0.011, and in-memory persistence under 0.001.
 - **Extended-v1 pilot.** CPU and memory generation 0.003, features 0.124, fitting 4.477, inference 0.240, margin selection 0.022, rolling p99 0.095, task scheduling and reporting 0.022, JSON encoding 0.007, and in-memory persistence under 0.001. Extended-v1 has no bootstrap stage.
 
-Fitting was the dominant cost. Vectorized rolling statistics calculate the same features directly in service order. The engine reuses static allocations, skips per-service accounting where the outputs do not consume it, and releases allocation arrays as soon as both resources have been evaluated. The scheduler uses a deque for memory-suspended tasks. The response reuses the worker's encoded output. Existing sampled charts and exports retain their fields and sampling policy.
+Fitting was the dominant cost. In a separate three-repeat comparison at 20 × 1,000, vectorized feature construction took 15.3 ms median, compared with 181.0 ms using the original per-step extractor. The two versions produced equivalent features in service order. The engine reuses static allocations, skips per-service accounting where the outputs do not consume it, and releases allocation arrays as soon as both resources have been evaluated. The scheduler uses a deque for memory-suspended tasks. The response reuses the worker's encoded output. Existing sampled charts and exports retain their fields and sampling policy.
 
 ## Numerical equivalence
 
 The recursive comparison covered every field of the three web workloads above, excluding only `execution_time_seconds`, `saved`, and `run_id`. Object keys, list lengths, discrete decisions, task counts, task-arrival SHA-256 digests, and sampling indices matched exactly. The 38,896 numeric leaves compared within relative tolerance 5 × 10⁻¹² and absolute tolerance 10⁻¹⁰. The observed maximum absolute difference was 3.64 × 10⁻¹² and maximum relative difference was 8.0 × 10⁻¹⁶. The tolerance covers float64 library and Random Forest summation-order effects. The phase leaves the archived CPU-only conclusions and extended-v1 protocol intact.
 
-CI regression tests cover the original per-step feature extractor, CPU pilot decisions and bootstrap, and extended pilot task arrivals, completion totals, and joint violation rates. The local measurement captures and full-study checkpoints are under the ignored `results/` directory.
+Regression tests cover the original per-step feature extractor, CPU pilot decisions and bootstrap, and extended pilot task arrivals, completion totals, and joint violation rates. The local measurement captures and full-study checkpoints are under the ignored `results/` directory.
 
 ## Runtime and persistence
 
@@ -34,11 +34,17 @@ CI regression tests cover the original per-step feature extractor, CPU pilot dec
 - The worker rejects a result larger than 2,000,000 bytes by default. The output bound is configurable up to 4,000,000 bytes. History requests select metadata only. Opening an individual run reads its complete historical result. The sampled series in exports match the charts and saved results.
 - A save allocates one run UUID and retries the same insert with duplicate-ignore semantics on the existing primary key. An ambiguous result is verified by visitor and UUID. A pruning failure leaves a confirmed save intact. If the insert and verification both lose their responses, the UI indicates that the save could not be confirmed. Each deliberately submitted simulation remains a separate run. The existing Supabase schema supports this change without a migration.
 
+In a local burst, eight simultaneous requests returned 503 with a five-second `Retry-After` while one real engine job held the slot. They returned in 29 ms total. Health responded during the job, and the next job completed after reaping. Local HTTP checks also verified that the Vercel handler aborts the upstream request on client disconnect and forwards `Retry-After`.
+
 ## Extended rollout and offline study
 
 Production extended execution defaults to disabled. The feature flag and independent caps are advertised through `/api/limits` only when enabled. Before enabling, verify peak memory and safe latency on the hosted instance, and verify both synthetic and aligned CSV runs through persistence and readback. Keep one Uvicorn worker and one simulation slot on the free instance. For rollback, set `ENABLE_PRODUCTION_EXTENDED_SIMULATION=false` and redeploy Render. For a full service rollback, redeploy the previous Render and Vercel revisions. Existing history remains readable.
 
-The full offline configuration uses 200 services, 4,032 steps and Seeds 1–10. To run the first seed with the measured offline profile:
+A local rehearsal in production configuration verified flag enforcement and rollback, synthetic and aligned CSV persistence and readback, and visitor isolation with an in-memory repository. Supabase coverage included a mocked lost acknowledgement and verification read. Hosted memory, latency, cancellation, and Supabase behavior require deployment checks.
+
+The full offline configuration uses 200 services, 4,032 steps and Seeds 1–10. Seed 1 completed in 1,592.071 engine seconds and peaked at 396.1 MiB on the workstation above. Its 40,445-byte checkpoint passed the resume validation. The remaining nine seeds are pending. At the measured seed's pace they would require about four more hours of serial execution.
+
+To verify the first checkpoint or recreate it if absent, use the same offline profile.
 
 ```sh
 python scripts/run_extended_study.py --full --seed 1 --resume --native-threads 1 --rf-jobs 8 --output-dir results/extended-v1-phase5-full
