@@ -144,6 +144,7 @@ async def persist_result(
         params.pop("seed", None)
     if mode == MODE:
         params["mode"] = mode
+    saving_started = time.perf_counter()
     try:
         async with asyncio.timeout(4):
             record = await repo.save_run(
@@ -159,11 +160,18 @@ async def persist_result(
         logger.warning("Simulation save could not be confirmed (%s)", type(exc).__name__)
         return {"saved": False}
 
+    pruning_started = time.perf_counter()
     try:
         async with asyncio.timeout(2):
             await repo.prune(client_id=client_id, keep=50)
     except Exception as exc:
         logger.warning("Simulation history prune failed (%s)", type(exc).__name__)
+    if mode == MODE:
+        logger.info(
+            "Extended simulation persistence: save %.1f ms, prune %.1f ms",
+            (pruning_started - saving_started) * 1000,
+            (time.perf_counter() - pruning_started) * 1000,
+        )
     return {"saved": True, "run_id": run_id}
 
 

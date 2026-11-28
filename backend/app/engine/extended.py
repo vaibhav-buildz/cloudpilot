@@ -217,6 +217,7 @@ def evaluate_resources(
     n_estimators_override: int | None,
     diagnostics: bool,
     rf_jobs: int = -1,
+    fit_seconds: dict[str, float] | None = None,
 ) -> dict:
     validation_cpu = {}
     test_cpu = {}
@@ -235,6 +236,7 @@ def evaluate_resources(
         include_diagnostics=diagnostics,
         include_service_metrics=False,
         rf_jobs=rf_jobs,
+        fit_seconds=fit_seconds,
     )
     cpu_result = run_split_pipeline(
         cpu, causal_reference(cpu), **common, observe_allocations=collect_cpu
@@ -306,6 +308,7 @@ def run_extended(
     n_estimators_override: int | None = None,
     diagnostics: bool = True,
     rf_jobs: int = -1,
+    fit_seconds: dict[str, float] | None = None,
 ) -> dict:
     started = time.time()
     deadline = started + timeout_seconds
@@ -360,6 +363,7 @@ def run_extended(
             n_estimators_override,
             diagnostics,
             rf_jobs,
+            fit_seconds,
         )
         for key, split in splits.items()
     }
