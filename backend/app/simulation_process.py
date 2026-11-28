@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -15,8 +16,24 @@ from threading import Lock
 from fastapi import HTTPException
 
 from app.config import Settings
+from app.simulation_memory import sample_peak, worker_memory
 
 RETRY_AFTER = {"Retry-After": "5"}
+logger = logging.getLogger("cloudpilot")
+
+
+def simulation_job(
+    settings: Settings, mode: str, services: int, steps: int, parameters: dict
+) -> dict:
+    return {
+        "mode": mode,
+        "parameters": {**parameters, "timeout_seconds": settings.worker_timeout_seconds},
+        "rf_jobs": settings.SIM_RF_JOBS,
+        "native_threads": settings.SIM_NATIVE_THREADS,
+        "max_services": services,
+        "max_steps": steps,
+        "max_result_bytes": settings.SIM_MAX_RESULT_BYTES,
+    }
 
 
 class SimulationProcesses:
@@ -28,6 +45,16 @@ class SimulationProcesses:
         self.workers: set[subprocess.Popen] = set()
         self.lock = Lock()
         self.closed = False
+
+    @property
+    def ready(self) -> bool:
+        return not self.closed
+
+    def start(self) -> None:
+        pass
+
+    async def aclose(self) -> None:
+        self.close()
 
     @contextmanager
     def admit(self, visitor: str):
@@ -63,6 +90,33 @@ class SimulationProcesses:
             for worker in self.workers:
                 self._reap(worker)
 
+    @staticmethod
+    def _spawn(settings: Settings, *args: str, environment: dict | None = None):
+        native = str(settings.SIM_NATIVE_THREADS)
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if not any(word in key.upper() for word in ("SECRET", "TOKEN", "PASSWORD", "API_KEY"))
+        }
+        env.update(
+            OPENBLAS_NUM_THREADS=native,
+            OMP_NUM_THREADS=native,
+            MKL_NUM_THREADS=native,
+            BLIS_NUM_THREADS=native,
+        )
+        env.update(environment or {})
+        executable = sys.executable
+        if os.name == "nt" and sys._base_executable != executable:
+            # The venv redirector would leave the API holding the wrong child handle.
+            executable = sys._base_executable
+            env["PYTHONPATH"] = os.pathsep.join(os.path.abspath(path) for path in sys.path)
+        return subprocess.Popen(
+            [executable, "-m", "app.simulation_worker", *args, str(os.getpid())],
+            stdin=subprocess.DEVNULL if os.name == "nt" else subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            env=env,
+        )
+
     async def run(
         self,
         settings: Settings,
@@ -78,50 +132,27 @@ class SimulationProcesses:
         with TemporaryDirectory(prefix="cloudpilot-simulation-") as temporary:
             directory = Path(temporary)
             (directory / "job.json").write_text(
-                json.dumps(
-                    {
-                        "mode": mode,
-                        "parameters": {**parameters, "timeout_seconds": timeout},
-                        "rf_jobs": settings.SIM_RF_JOBS,
-                        "native_threads": settings.SIM_NATIVE_THREADS,
-                        "max_services": max_services,
-                        "max_steps": max_steps,
-                        "max_result_bytes": settings.SIM_MAX_RESULT_BYTES,
-                    }
-                ),
+                json.dumps(simulation_job(settings, mode, max_services, max_steps, parameters)),
                 encoding="utf-8",
             )
             if contents is not None:
                 (directory / "input.csv").write_bytes(contents)
-            native = str(settings.SIM_NATIVE_THREADS)
-            env = {
-                **os.environ,
-                "OPENBLAS_NUM_THREADS": native,
-                "OMP_NUM_THREADS": native,
-                "MKL_NUM_THREADS": native,
-                "BLIS_NUM_THREADS": native,
-            }
-            executable = sys.executable
-            if os.name == "nt" and sys._base_executable != executable:
-                # The venv redirector starts another process on Windows. Open the
-                # real interpreter so the handle always identifies the engine.
-                executable = sys._base_executable
-                env["PYTHONPATH"] = os.pathsep.join(os.path.abspath(path) for path in sys.path)
             with self.lock:
                 if self.closed:
                     raise HTTPException(503, "Simulation service is restarting.", RETRY_AFTER)
                 if loop.time() >= deadline:
                     raise TimeoutError
-                worker = subprocess.Popen(
-                    [executable, "-m", "app.simulation_worker", temporary, str(os.getpid())],
-                    stdin=subprocess.DEVNULL if os.name == "nt" else subprocess.PIPE,
-                    stdout=subprocess.DEVNULL,
-                    env=env,
-                )
+                idle = worker_memory()
+                worker = self._spawn(settings, temporary)
                 self.workers.add(worker)
+            peaks = {}
+            next_sample = loop.time()
             try:
                 async with asyncio.timeout_at(deadline):
                     while worker.poll() is None:
+                        if loop.time() >= next_sample:
+                            sample_peak(worker.pid, peaks)
+                            next_sample = loop.time() + 0.25
                         await asyncio.sleep(0.025)
                 if loop.time() >= deadline:
                     raise TimeoutError
@@ -142,3 +173,10 @@ class SimulationProcesses:
                 with self.lock:
                     self._reap(worker)
                     self.workers.remove(worker)
+                if idle:
+                    logger.info(
+                        "Per-request worker job: mode %s, idle %s, memory peaks %s",
+                        mode,
+                        idle,
+                        peaks,
+                    )
