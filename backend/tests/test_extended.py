@@ -264,3 +264,29 @@ def test_production_extended_flag_has_independent_caps(valid_dev_settings):
             ).status_code
             == 422
         )
+
+
+def test_production_canary_requires_direct_authenticated_opt_in(valid_dev_settings):
+    from fastapi.testclient import TestClient
+
+    from app.main import create_app
+    from tests.conftest import TEST_VALID_KEY, mock_simulation
+
+    settings = valid_dev_settings.model_copy(
+        update={
+            "APP_ENV": "production",
+            "SUPABASE_URL": "https://example.com",
+            "SUPABASE_SERVICE_KEY": "test-only",
+            "ENABLE_PRODUCTION_EXTENDED_CANARY": True,
+        }
+    )
+    auth = {"X-API-Key": TEST_VALID_KEY}
+    canary = {"X-CloudPilot-Extended-Canary": "1"}
+    workload = {"mode": "extended-v1", "n_services": 3, "n_steps": 482}
+    app = create_app(settings)
+    with TestClient(app) as client, mock_simulation({"mode": "extended-v1"}):
+        app.state.repo = None
+        assert client.get("/api/limits", headers=auth).json()["extended_max_steps"] is None
+        assert client.post("/api/simulate", json=workload, headers=canary).status_code == 401
+        assert client.post("/api/simulate", json=workload, headers=auth).status_code == 403
+        assert client.post("/api/simulate", json=workload, headers=auth | canary).status_code == 200

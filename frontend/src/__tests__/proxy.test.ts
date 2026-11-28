@@ -123,6 +123,7 @@ describe("Proxy Helper: Header Sanitization and Injection", () => {
       "x-api-key": "evil-client-key",
       authorization: "Bearer evil-token",
       "x-visitor-id": "spoofed-uuid",
+      "x-cloudpilot-extended-canary": "1",
       host: "cloudpilot.vercel.app",
       cookie: "session=123",
       "content-type": "application/json",
@@ -140,6 +141,7 @@ describe("Proxy Helper: Header Sanitization and Injection", () => {
     expect(forwarded["content-type"]).toBe("application/json");
     expect(forwarded["accept"]).toBe("application/json");
     expect(forwarded["authorization"]).toBeUndefined();
+    expect(forwarded["x-cloudpilot-extended-canary"]).toBeUndefined();
     expect(forwarded["cookie"]).toBeUndefined();
     expect(forwarded["host"]).toBeUndefined();
   });

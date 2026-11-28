@@ -36,12 +36,16 @@ class Settings(BaseSettings):
     SIM_MAX_SERVICES: int = Field(default=20, ge=1)
     SIM_TIMEOUT_SECONDS: int = Field(default=42, ge=1)
     SIM_MAX_CONCURRENT: int = Field(default=1, ge=1)
+    SIM_WORKER_MODE: Literal["per-request", "persistent"] = "per-request"
+    SIM_WORKER_MAX_JOBS: int = Field(default=25, ge=1, le=100)
+    SIM_WORKER_RECYCLE_RSS_MIB: int = Field(default=256, ge=64, le=384)
     SIM_RF_JOBS: int = Field(default=1, ge=1)
     SIM_NATIVE_THREADS: int = Field(default=1, ge=1)
     SIM_MAX_RESULT_BYTES: int = Field(default=2_000_000, ge=1, le=4_000_000)
     GLOBAL_SIM_PER_MIN: int = Field(default=20, ge=1)
     ENABLE_EXTENDED_SIMULATION: bool = False
     ENABLE_PRODUCTION_EXTENDED_SIMULATION: bool = False
+    ENABLE_PRODUCTION_EXTENDED_CANARY: bool = False
     SIM_EXTENDED_MAX_SERVICES: int = Field(
         default=4, ge=MIN_WORKLOAD_SERVICES, le=EXTENDED_MAX_SERVICES
     )
@@ -57,6 +61,8 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_fail_closed(self) -> Settings:
         """Enforce strict fail-closed security rules across environments."""
+        if self.SIM_WORKER_MODE == "persistent" and self.SIM_MAX_CONCURRENT != 1:
+            raise ValueError("Persistent simulation workers require SIM_MAX_CONCURRENT=1.")
         key = self.CLOUDPILOT_API_KEY.strip()
         origins = self.ALLOWED_ORIGIN.strip()
 
