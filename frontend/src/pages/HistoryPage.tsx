@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import {
   Link,
   useNavigate,
@@ -46,15 +47,16 @@ function messageOf(error: unknown, fallback: string) {
 
 function RunRow({
   run,
-  expanded,
+  details,
   onToggle,
   onDelete,
 }: {
   run: SavedRun;
-  expanded: boolean;
+  details?: ReactNode;
   onToggle: () => void;
   onDelete: (run: SavedRun) => void;
 }) {
+  const expanded = details != null;
   const { n_services, n_steps, target_violation, seed, mode } = run.params;
   const SourceIcon = run.source === "csv" ? FileSpreadsheet : Workflow;
   const date = new Date(run.created_at);
@@ -176,17 +178,7 @@ function RunRow({
               </div>
             )}
           </dl>
-          {run.result && run.status === "ok" ? (
-            <SimulationResultView
-              result={run.result}
-              source={run.source}
-              persisted
-            />
-          ) : (
-            <p className="history-detail-message">
-              {run.error || "No evaluation results were recorded for this run."}
-            </p>
-          )}
+          {details}
         </section>
       )}
     </li>
@@ -266,6 +258,81 @@ function DeleteDialog({
   );
 }
 
+type RunDetailState =
+  | { status: "loading" }
+  | { status: "ready"; run: SavedRun }
+  | { status: "error"; message: string };
+
+function useRunDetails(id: string) {
+  const [state, setState] = useState<RunDetailState>({ status: "loading" });
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    const controller = new AbortController();
+    getRun(id, controller.signal)
+      .then((run) => {
+        if (!controller.signal.aborted) setState({ status: "ready", run });
+      })
+      .catch((err) => {
+        if (!controller.signal.aborted) {
+          setState({
+            status: "error",
+            message: messageOf(err, "Could not load this run."),
+          });
+        }
+      });
+    return () => controller.abort();
+  }, [id, attempt]);
+
+  function retry() {
+    setState({ status: "loading" });
+    setAttempt((value) => value + 1);
+  }
+
+  return { state, retry };
+}
+
+function RunDetailStatus({
+  state,
+  onRetry,
+}: {
+  state: Exclude<RunDetailState, { status: "ready" }>;
+  onRetry: () => void;
+}) {
+  if (state.status === "loading") {
+    return <p role="status">Loading run details…</p>;
+  }
+  return (
+    <>
+      <p role="alert">{state.message}</p>
+      <button type="button" className="btn btn-secondary" onClick={onRetry}>
+        Retry loading run
+      </button>
+    </>
+  );
+}
+
+function RunEvaluation({ run }: { run: SavedRun }) {
+  if (run.result && run.status === "ok") {
+    return (
+      <SimulationResultView result={run.result} source={run.source} persisted />
+    );
+  }
+  return (
+    <p className="history-detail-message">
+      {run.error || "No evaluation results were recorded for this run."}
+    </p>
+  );
+}
+
+function InlineRunDetails({ id }: { id: string }) {
+  const { state, retry } = useRunDetails(id);
+  return state.status === "ready" ? (
+    <RunEvaluation run={state.run} />
+  ) : (
+    <RunDetailStatus state={state} onRetry={retry} />
+  );
+}
+
 function LinkedRun({
   id,
   onClose,
@@ -275,34 +342,24 @@ function LinkedRun({
   onClose: () => void;
   onDelete: (run: SavedRun) => void;
 }) {
-  const [run, setRun] = useState<SavedRun | null>(null);
-  const [error, setError] = useState("");
-  useEffect(() => {
-    let active = true;
-    getRun(id)
-      .then((data) => {
-        if (active) setRun(data);
-      })
-      .catch((err) => {
-        if (active) setError(messageOf(err, "Could not load this run."));
-      });
-    return () => {
-      active = false;
-    };
-  }, [id]);
-  if (run)
-    return <RunRow run={run} expanded onToggle={onClose} onDelete={onDelete} />;
+  const { state, retry } = useRunDetails(id);
+  if (state.status === "ready") {
+    return (
+      <RunRow
+        run={state.run}
+        details={<RunEvaluation run={state.run} />}
+        onToggle={onClose}
+        onDelete={onDelete}
+      />
+    );
+  }
   return (
     <li className="history-linked-state">
-      {error ? (
-        <>
-          <p role="alert">{error}</p>
-          <button type="button" className="btn btn-secondary" onClick={onClose}>
-            Close details
-          </button>
-        </>
-      ) : (
-        <p role="status">Loading run details…</p>
+      <RunDetailStatus state={state} onRetry={retry} />
+      {state.status === "error" && (
+        <button type="button" className="btn btn-secondary" onClick={onClose}>
+          Close details
+        </button>
       )}
     </li>
   );
@@ -447,7 +504,7 @@ function RunHistory({ page }: { page: number }) {
                 <RunRow
                   key={run.id}
                   run={run}
-                  expanded={id === run.id}
+                  details={id === run.id ? <InlineRunDetails id={run.id} /> : undefined}
                   onDelete={setDeleting}
                   onToggle={() =>
                     navigate(

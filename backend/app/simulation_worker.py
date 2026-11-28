@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import threading
+import time
 from pathlib import Path
 
 
@@ -13,12 +14,17 @@ class InvalidWorkload(ValueError):
     """CSV data failed input validation."""
 
 
-def execute(job: dict, csv_path: Path | None) -> dict:
+def execute(job: dict, csv_path: Path | None, profile: dict | None = None) -> dict:
+    started = time.perf_counter()
     from threadpoolctl import threadpool_limits
 
     from app.engine.csv_loader import load_workload_from_csv
     from app.engine.extended import parse_extended_csv, run_extended
     from app.engine.runner import run_experiment
+
+    imported = time.perf_counter()
+    if profile is not None:
+        profile["imports_ms"] = round((imported - started) * 1000, 1)
 
     with threadpool_limits(limits=job["native_threads"]):
         extended = job["mode"] == "extended-v1"
@@ -42,9 +48,22 @@ def execute(job: dict, csv_path: Path | None) -> dict:
                     )
             kwargs = {**kwargs, "workload": workload, "n_services": services, "n_steps": steps}
 
-        options = {"include_diagnostics": True} if not extended else {}
-        run = run_extended if extended else run_experiment
-        return run(**kwargs, **options, rf_jobs=job["rf_jobs"])
+        if profile is not None:
+            profile["setup_ms"] = round((time.perf_counter() - imported) * 1000, 1)
+
+        if extended:
+            fit_seconds: dict[str, float] | None = {} if profile is not None else None
+            result = run_extended(**kwargs, rf_jobs=job["rf_jobs"], fit_seconds=fit_seconds)
+            if fit_seconds is not None:
+                profile["fit_ms"] = {
+                    name: round(seconds * 1000, 1) for name, seconds in fit_seconds.items()
+                }
+        else:
+            result = run_experiment(**kwargs, rf_jobs=job["rf_jobs"], include_diagnostics=True)
+
+        if profile is not None:
+            profile["engine_ms"] = round(result["execution_time_seconds"] * 1000)
+        return result
 
 
 def exit_on_parent_death(parent_pid: int) -> None:
@@ -77,20 +96,32 @@ def main(directory: Path, parent_pid: int) -> int:
         threading.Thread(target=exit_on_parent_death, args=(parent_pid,), daemon=True).start()
     job = json.loads((directory / "job.json").read_bytes())
     csv_path = directory / "input.csv"
+    profile = {}
     try:
-        result = execute(job, csv_path if csv_path.exists() else None)
+        result = execute(job, csv_path if csv_path.exists() else None, profile)
     except TimeoutError:
         return 2
     except InvalidWorkload as exc:
         (directory / "error.txt").write_text(str(exc)[:1000], encoding="utf-8")
         return 3
 
+    encoding_started = time.perf_counter()
     encoded = json.dumps(
         result, ensure_ascii=False, separators=(",", ":"), allow_nan=False
     ).encode()
     if len(encoded) > job["max_result_bytes"]:
         return 4
     (directory / "result.json").write_bytes(encoded)
+    profile["encode_ms"] = round((time.perf_counter() - encoding_started) * 1000, 1)
+    if sys.platform.startswith("linux"):
+        import resource
+
+        profile["peak_worker_rss_kib"] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    print(
+        json.dumps({"event": "simulation_worker_profile", "mode": job["mode"], **profile}),
+        file=sys.stderr,
+        flush=True,
+    )
     return 0
 
 
