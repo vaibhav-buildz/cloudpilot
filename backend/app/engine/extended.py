@@ -217,6 +217,8 @@ def evaluate_resources(
     n_estimators_override: int | None,
     diagnostics: bool,
     rf_jobs: int = -1,
+    fit_seconds: dict[str, float] | None = None,
+    schedule_seconds: list[float] | None = None,
 ) -> dict:
     validation_cpu = {}
     test_cpu = {}
@@ -235,6 +237,7 @@ def evaluate_resources(
         include_diagnostics=diagnostics,
         include_service_metrics=False,
         rf_jobs=rf_jobs,
+        fit_seconds=fit_seconds,
     )
     cpu_result = run_split_pipeline(
         cpu, causal_reference(cpu), **common, observe_allocations=collect_cpu
@@ -255,18 +258,19 @@ def evaluate_resources(
         feasible = val_rate <= target
         cpu_violations = test_cpu.pop(name)
         cpu_allocation = allocations_cpu.pop(name)
+        task_results = None
+        if feasible or name == "static":
+            started = time.perf_counter()
+            task_results = simulate_policy(
+                tasks, cpu_allocation.reshape(shape), allocation.reshape(shape), deadline
+            )
+            if schedule_seconds is not None:
+                schedule_seconds.append(time.perf_counter() - started)
         policies[name] = {
             "validation_joint_violation_rate": val_rate,
             "test_joint_violation_rate": float(np.mean(cpu_violations | test)),
             "jointly_feasible": feasible,
-            "tasks": simulate_policy(
-                tasks,
-                cpu_allocation.reshape(shape),
-                allocation.reshape(shape),
-                deadline,
-            )
-            if feasible or name == "static"
-            else None,
+            "tasks": task_results,
         }
 
     memory_result = run_split_pipeline(
@@ -306,6 +310,8 @@ def run_extended(
     n_estimators_override: int | None = None,
     diagnostics: bool = True,
     rf_jobs: int = -1,
+    fit_seconds: dict[str, float] | None = None,
+    schedule_seconds: list[float] | None = None,
 ) -> dict:
     started = time.time()
     deadline = started + timeout_seconds
@@ -360,6 +366,8 @@ def run_extended(
             n_estimators_override,
             diagnostics,
             rf_jobs,
+            fit_seconds,
+            schedule_seconds,
         )
         for key, split in splits.items()
     }

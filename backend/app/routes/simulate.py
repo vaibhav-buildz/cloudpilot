@@ -32,8 +32,13 @@ ExperimentMode = Literal["cpu-only", "extended-v1"]
 MODE = "extended-v1"
 
 
-def require_extended_enabled(mode: ExperimentMode, settings: Settings) -> None:
-    if mode == MODE and not settings.extended_simulation_enabled:
+def require_extended_enabled(mode: ExperimentMode, settings: Settings, request: Request) -> None:
+    canary = (
+        settings.APP_ENV == "production"
+        and settings.ENABLE_PRODUCTION_EXTENDED_CANARY
+        and request.headers.get("X-CloudPilot-Extended-Canary") == "1"
+    )
+    if mode == MODE and not (settings.extended_simulation_enabled or canary):
         raise HTTPException(403, "Extended simulation is available offline only.")
 
 
@@ -144,6 +149,7 @@ async def persist_result(
         params.pop("seed", None)
     if mode == MODE:
         params["mode"] = mode
+    saving_started = time.perf_counter()
     try:
         async with asyncio.timeout(4):
             record = await repo.save_run(
@@ -159,11 +165,18 @@ async def persist_result(
         logger.warning("Simulation save could not be confirmed (%s)", type(exc).__name__)
         return {"saved": False}
 
+    pruning_started = time.perf_counter()
     try:
         async with asyncio.timeout(2):
             await repo.prune(client_id=client_id, keep=50)
     except Exception as exc:
         logger.warning("Simulation history prune failed (%s)", type(exc).__name__)
+    if mode == MODE:
+        logger.info(
+            "Extended simulation persistence: save %.1f ms, prune %.1f ms",
+            (pruning_started - saving_started) * 1000,
+            (time.perf_counter() - pruning_started) * 1000,
+        )
     return {"saved": True, "run_id": run_id}
 
 
@@ -248,7 +261,7 @@ async def simulate_workload(
     client_id: Annotated[str, Depends(verify_api_key)],
 ) -> Response:
     """Run a simulation on synthetic seeded workload across TIME and SERVICE splits."""
-    require_extended_enabled(req.mode, settings)
+    require_extended_enabled(req.mode, settings, request)
     services, steps = settings.simulation_caps(req.mode == MODE)
     for name, value, cap in (
         ("n_services", req.n_services, services),
@@ -276,7 +289,7 @@ async def simulate_csv_workload(
     mode: Annotated[ExperimentMode, Form()] = "cpu-only",
 ) -> Response:
     """Execute an allocation experiment on an uploaded workload CSV."""
-    require_extended_enabled(mode, settings)
+    require_extended_enabled(mode, settings, request)
     if form_target_violation is not None:
         target_violation = form_target_violation
     return await respond_to_simulation(

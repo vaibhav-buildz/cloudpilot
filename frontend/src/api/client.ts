@@ -192,10 +192,11 @@ export async function getRuns(
   }
 }
 
-export async function getRun(id: string): Promise<SavedRun> {
+export async function getRun(id: string, signal?: AbortSignal): Promise<SavedRun> {
   try {
     const res = await fetch(`/api/runs/${encodeURIComponent(id)}`, {
       headers: { Accept: "application/json" },
+      signal,
     });
     return await handleResponse<SavedRun>(res);
   } catch (err) {

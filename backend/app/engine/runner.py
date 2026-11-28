@@ -54,6 +54,7 @@ def run_split_pipeline(
     observe_allocations: Callable[[str, np.ndarray, np.ndarray, np.ndarray], None] | None = None,
     rf_jobs: int = -1,
     include_service_metrics: bool = True,
+    fit_seconds: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """Execute feature generation, training, validation margin tuning, and test evaluation.
 
@@ -176,7 +177,11 @@ def run_split_pipeline(
 
     for name, model in models.items():
         _check_deadline(deadline, f"training {name}")
+        if fit_seconds is not None:
+            fit_started = time.perf_counter()
         fit_model(model, X_train, y_train)
+        if fit_seconds is not None:
+            fit_seconds[name] = fit_seconds.get(name, 0.0) + time.perf_counter() - fit_started
 
         # Validation prediction & margin tuning
         pred_val = model.predict(X_val)

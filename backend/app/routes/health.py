@@ -33,6 +33,12 @@ async def get_ready(
             content={"status": "not ready", "reason": reason},
         )
 
+    if not request.app.state.simulations.ready:
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"status": "not ready", "reason": "Simulation worker is warming up"},
+        )
+
     repo = getattr(request.app.state, "repo", None)
     if repo is not None:
         try:

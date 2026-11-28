@@ -26,11 +26,15 @@ services:
         value: "42"
       - key: SIM_MAX_CONCURRENT
         value: "1"
+      - key: SIM_WORKER_MODE
+        value: "per-request"
       - key: SIM_RF_JOBS
         value: "1"
       - key: SIM_NATIVE_THREADS
         value: "1"
       - key: ENABLE_PRODUCTION_EXTENDED_SIMULATION
+        value: "false"
+      - key: ENABLE_PRODUCTION_EXTENDED_CANARY
         value: "false"
       - key: SIM_EXTENDED_MAX_SERVICES
         value: "4"

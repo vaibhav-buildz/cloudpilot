@@ -1,8 +1,8 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { HistoryPage } from "../pages/HistoryPage";
-import type { SavedRun } from "../types/api";
+import type { ExperimentMode, ExperimentResult, SavedRun } from "../types/api";
 
 function sampleRun(index = 1): SavedRun {
   return {
@@ -18,6 +18,41 @@ function sampleRun(index = 1): SavedRun {
 }
 
 const response = (data: unknown) => ({ ok: true, json: async () => data });
+
+function savedEvaluation(mode: ExperimentMode, elapsed = 2): ExperimentResult {
+  const parameters = { n_services: 3, n_steps: 482, seed: 42, target_violation: 0.01 };
+  const comparison = {
+    comparator: "static",
+    comparator_is_feasible: true,
+    methods: {
+      static: {
+        margin_value: 1, margin_type: "multiplicative", is_feasible: true,
+        violation_rate: 0, savings: 0, utilization: 0.6, wastage: 0.4,
+      },
+    },
+  };
+  if (mode === "extended-v1") {
+    const split = {
+      cpu: comparison, memory: comparison, offered_tasks: 1, offered_tasks_sha256: "test",
+      policies: {
+        static: {
+          jointly_feasible: true,
+          validation_joint_violation_rate: 0,
+          test_joint_violation_rate: 0,
+          tasks: null,
+        },
+      },
+    };
+    return { mode, parameters, execution_time_seconds: elapsed, time_split: split, service_split: split };
+  }
+  const hypothesis = { hypothesis: "", verdict: "SUPPORTED", estimate: 0, ci_lower: 0, ci_upper: 0, p_value: 1 };
+  return {
+    parameters, execution_time_seconds: elapsed, disclaimer: "",
+    time_split: { ...comparison, h1: hypothesis },
+    service_split: { ...comparison, h2: hypothesis },
+    h3: { hypothesis: "", verdict: "SUPPORTED", test_violation_time: 0, test_violation_service: 0, threshold: 0.01 },
+  };
+}
 
 function renderHistory(path = "/history") {
   return render(
@@ -53,7 +88,7 @@ describe("HistoryPage", () => {
 
   it("displays recorded status and duration, and expands the selected row", async () => {
     const run = { ...sampleRun(), source: "csv", status: "error", error: "Execution timed out." };
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response([run])));
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => response(url.includes("?") ? [run] : run)));
     renderHistory();
 
     const expand = await screen.findByRole("button", { name: `Expand run ${run.id}` });
@@ -71,6 +106,66 @@ describe("HistoryPage", () => {
     expect(collapse).toHaveAttribute("aria-expanded", "true");
     fireEvent.click(collapse);
     expect(screen.queryByText(run.error)).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["cpu-only", "Experiment results"],
+    ["extended-v1", "Extended CPU + Memory + Tasks"],
+  ] as const)("fetches and renders full %s results only after expanding", async (mode, heading) => {
+    const summary = { ...sampleRun(), params: { ...sampleRun().params, mode } };
+    let complete!: (value: ReturnType<typeof response>) => void;
+    const detail = new Promise<ReturnType<typeof response>>((resolve) => { complete = resolve; });
+    const fetchRun = vi.fn((url: string) => url.includes("?") ? Promise.resolve(response([summary])) : detail);
+    vi.stubGlobal("fetch", fetchRun);
+    renderHistory();
+    const expand = await screen.findByRole("button", { name: `Expand run ${summary.id}` });
+    expect(fetchRun).toHaveBeenCalledTimes(1);
+    fireEvent.click(expand);
+    expect(await screen.findByText("Loading run details…")).toBeVisible();
+    expect(screen.queryByText(/No evaluation results were recorded/)).not.toBeInTheDocument();
+    expect(fetchRun).toHaveBeenCalledWith(`/api/runs/${summary.id}`, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    complete(response({ ...summary, result: savedEvaluation(mode) }));
+    expect(await screen.findByRole("heading", { name: heading })).toBeVisible();
+  });
+
+  it("retries a failed detail fetch without reloading the history list", async () => {
+    const summary = sampleRun();
+    const request = vi.fn()
+      .mockResolvedValueOnce(response([summary]))
+      .mockResolvedValueOnce(new Response("{}", { status: 502 }))
+      .mockResolvedValueOnce(response({ ...summary, result: savedEvaluation("cpu-only") }));
+    vi.stubGlobal("fetch", request);
+    renderHistory(`/history/${summary.id}`);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/backend may be starting/i);
+    expect(screen.queryByText(/No evaluation results were recorded/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry loading run" }));
+    expect(await screen.findByRole("heading", { name: "Experiment results" })).toBeVisible();
+    expect(request.mock.calls.map(([url]) => url)).toEqual([
+      "/api/runs?limit=11&offset=0", `/api/runs/${summary.id}`, `/api/runs/${summary.id}`,
+    ]);
+  });
+
+  it("aborts a pending detail request and ignores its response after switching rows", async () => {
+    const first = sampleRun();
+    const second = sampleRun(2);
+    let finishFirst!: (value: ReturnType<typeof response>) => void;
+    const firstDetail = new Promise<ReturnType<typeof response>>((resolve) => { finishFirst = resolve; });
+    const request = vi.fn(async (url: string, _init: RequestInit) => {
+      if (url.includes("?")) return response([first, second]);
+      if (url.endsWith(first.id)) return firstDetail;
+      return response({ ...second, result: savedEvaluation("extended-v1") });
+    });
+    vi.stubGlobal("fetch", request);
+    renderHistory();
+    fireEvent.click(await screen.findByRole("button", { name: `Expand run ${first.id}` }));
+    expect(await screen.findByText("Loading run details…")).toBeVisible();
+    const firstSignal = request.mock.calls.find(([url]) => url.endsWith(first.id))?.[1].signal;
+    fireEvent.click(screen.getByRole("button", { name: `Expand run ${second.id}` }));
+    expect(await screen.findByRole("heading", { name: "Extended CPU + Memory + Tasks" })).toBeVisible();
+    expect(firstSignal?.aborted).toBe(true);
+    await act(async () => finishFirst(response({ ...first, result: savedEvaluation("cpu-only") })));
+    expect(screen.queryByRole("heading", { name: "Experiment results" })).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: `Details for run ${second.id}` })).toBeVisible();
   });
 
   it("pages through real API rows and requests deletion only after confirmation", async () => {
