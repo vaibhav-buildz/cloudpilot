@@ -197,11 +197,17 @@ async def serve_job(connection: socket.socket, message: dict, content: bytes) ->
     await ipc.send(connection, {"id": job_id, "status": "ok"}, encoded, max_payload=limit)
 
 
-async def serve(port: int) -> None:
+async def serve(address: int, inherited: bool = False) -> None:
     nonce = os.environ.pop("CLOUDPILOT_WORKER_NONCE")
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as connection:
+    connection = (
+        socket.socket(fileno=address)
+        if inherited
+        else socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    )
+    with connection:
         connection.setblocking(False)
-        await asyncio.get_running_loop().sock_connect(connection, ("127.0.0.1", port))
+        if not inherited:
+            await asyncio.get_running_loop().sock_connect(connection, ("127.0.0.1", address))
         started = time.perf_counter()
         dependencies()
         imports_ms = round((time.perf_counter() - started) * 1000, 1)
@@ -238,9 +244,9 @@ def main(directory: Path) -> int:
 
 if __name__ == "__main__":
     watch_parent(int(sys.argv[-1]))
-    if sys.argv[1] == "--persistent":
+    if sys.argv[1] in ("--persistent", "--persistent-fd"):
         try:
-            asyncio.run(serve(int(sys.argv[2])))
+            asyncio.run(serve(int(sys.argv[2]), inherited=sys.argv[1] == "--persistent-fd"))
         except (EOFError, ConnectionError):
             sys.exit(1)
         except Exception as exc:

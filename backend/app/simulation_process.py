@@ -91,7 +91,12 @@ class SimulationProcesses:
                 self._reap(worker)
 
     @staticmethod
-    def _spawn(settings: Settings, *args: str, environment: dict | None = None):
+    def _spawn(
+        settings: Settings,
+        *args: str,
+        environment: dict | None = None,
+        worker_fd: int | None = None,
+    ):
         native = str(settings.SIM_NATIVE_THREADS)
         env = {
             key: value
@@ -110,11 +115,13 @@ class SimulationProcesses:
             # The venv redirector would leave the API holding the wrong child handle.
             executable = sys._base_executable
             env["PYTHONPATH"] = os.pathsep.join(os.path.abspath(path) for path in sys.path)
+        options = {"pass_fds": (worker_fd,)} if worker_fd is not None else {}
         return subprocess.Popen(
             [executable, "-m", "app.simulation_worker", *args, str(os.getpid())],
             stdin=subprocess.DEVNULL if os.name == "nt" else subprocess.PIPE,
             stdout=subprocess.DEVNULL,
             env=env,
+            **options,
         )
 
     async def run(

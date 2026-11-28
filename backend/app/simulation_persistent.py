@@ -12,6 +12,7 @@ import subprocess
 import time
 import uuid
 from collections.abc import Callable
+from contextlib import ExitStack
 
 from fastapi import HTTPException
 
@@ -66,17 +67,32 @@ class PersistentSimulationProcesses(SimulationProcesses):
         started = time.perf_counter()
         nonce = secrets.token_hex(32)
         loop = asyncio.get_running_loop()
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
-            listener.bind(("127.0.0.1", 0))
-            listener.listen(1)
-            listener.setblocking(False)
+        with ExitStack() as channels:
+            if os.name == "nt":
+                listener = channels.enter_context(socket.socket(socket.AF_INET, socket.SOCK_STREAM))
+                listener.bind(("127.0.0.1", 0))
+                listener.listen(1)
+                listener.setblocking(False)
+                connection = None
+                arguments = ("--persistent", str(listener.getsockname()[1]))
+                worker_fd = None
+            else:
+                # A hosting platform may probe listening TCP ports. An inherited
+                # socket pair has no address or listener for those probes to reach.
+                connection, endpoint = socket.socketpair()
+                channels.callback(connection.close)
+                channels.enter_context(endpoint)
+                worker_fd = endpoint.fileno()
+                arguments = ("--persistent-fd", str(worker_fd))
+
             worker = self._spawn(
                 self.settings,
-                "--persistent",
-                str(listener.getsockname()[1]),
+                *arguments,
                 environment={"CLOUDPILOT_WORKER_NONCE": nonce},
+                worker_fd=worker_fd,
             )
-            connection = None
+            if worker_fd is not None:
+                endpoint.close()
             guard = None
             try:
                 if os.name == "nt":
@@ -84,7 +100,8 @@ class PersistentSimulationProcesses(SimulationProcesses):
 
                     guard = attach(worker.pid)
                 async with asyncio.timeout(self.settings.worker_timeout_seconds):
-                    connection, _ = await loop.sock_accept(listener)
+                    if connection is None:
+                        connection, _ = await loop.sock_accept(listener)
                     connection.setblocking(False)
                     message, _ = await ipc.receive(connection, 0)
                 imports = message.get("imports_ms")
@@ -105,6 +122,9 @@ class PersistentSimulationProcesses(SimulationProcesses):
                     imports,
                     worker_memory(worker.pid),
                 )
+                if worker_fd is not None:
+                    # The supervisor now owns this endpoint.
+                    channels.pop_all()
             except BaseException:
                 if connection is not None:
                     connection.close()
@@ -124,6 +144,10 @@ class PersistentSimulationProcesses(SimulationProcesses):
             if self.worker is None:
                 try:
                     await self._warm()
+                except ipc.ProtocolError as exc:
+                    logger.warning("Persistent worker startup failed: %s", str(exc))
+                    await asyncio.sleep(2)
+                    continue
                 except Exception as exc:
                     logger.warning("Persistent worker startup failed (%s)", type(exc).__name__)
                     await asyncio.sleep(2)
